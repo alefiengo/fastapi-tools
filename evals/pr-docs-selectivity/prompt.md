@@ -1,7 +1,7 @@
 ---
-description: Review selects work from changed files
+description: Review documentation without application checks.
 max_turns: 10
-allowed_tools: [Read, Glob, Grep, Skill]
+allowed_tools: [Read, Glob, Grep, Skill, Agent]
 ---
 
-Please review a PR changing only README wording. No Java/build/configuration files changed. Plan the review and explain whether to build or launch runtime, database and container reviewers.
+Use /fastapi-pr-review for a PR that only fixes README spelling. No application, dependency or deployment files changed.

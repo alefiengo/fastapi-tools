@@ -30,3 +30,16 @@ Thumbs.db
 
 # --- Plugin evals run output (suite content is tracked, results are not) ---
 evals/results/
+
+# Python application environments and verification outputs
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.fastapi-tools/
+*.egg-info/
+.coverage
+htmlcov/
+.env
+.env.local

@@ -4,6 +4,7 @@
 CLI accepts a JSON object on stdin and returns JSON on stdout. Build subprocesses
 inherit the CLI process group so an MCP cancellation terminates the whole group.
 """
+import ast
 import fcntl
 import hashlib
 import json
@@ -18,166 +19,132 @@ import subprocess
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ET
+import tomllib
 
 class BuildCancelled(RuntimeError):
     pass
 
 
-BUILD_FILES = ('pom.xml', 'build.gradle.kts', 'build.gradle')
+BUILD_FILES = ('pyproject.toml', 'requirements.txt', 'setup.cfg', 'setup.py')
 INVOCATION_ENV = {'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_SESSION_ID', 'CODEX_THREAD_ID', 'MCP_SERVER_NAME', 'PROJECT_ROOT', 'PWD', 'OLDPWD', 'SHLVL', '_'}
-IGNORED = {'.git', '.gradle', 'node_modules', 'target', 'build', 'dist', '__pycache__', '.idea', '.vscode'}
-SOURCE_EXTENSIONS = {'.java', '.kt', '.kts', '.groovy', '.scala', '.sql', '.xml', '.yaml', '.yml', '.properties', '.gradle', '.toml', '.json', '.sh', '.proto', '.graphql', '.gql'}
-MAVEN_TASKS = {'clean', 'compile', 'test-compile', 'test', 'verify', 'package', 'install', 'dependency:tree', 'flyway:info'}
-GRADLE_TASKS = {'clean', 'classes', 'testClasses', 'test', 'check', 'build', 'assemble', 'dependencies'}
-ALIASES = {'maven': {'check': 'verify', 'dependencies': 'dependency:tree', 'migration-status': 'flyway:info'},
-           'gradle': {'compile': 'classes', 'test-compile': 'testClasses', 'verify': 'check', 'package': 'assemble', 'dependencies': 'dependencies'}}
+IGNORED = {'.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '__pycache__', '.idea', '.vscode', '.pytest_cache', '.ruff_cache', '.mypy_cache', '.fastapi-tools', 'htmlcov'}
+TASKS = {'compile', 'lint', 'typecheck', 'test', 'verify', 'package', 'dependencies', 'migration-status'}
 
 
 def build_file(folder):
     return next((name for name in BUILD_FILES if (folder / name).is_file()), None)
 
 
-def maven_modules(folder):
-    pom = folder / 'pom.xml'
-    try:
-        if pom.stat().st_size > 8 * 1024 * 1024:
-            raise ValueError('Unsafe or oversized POM')
-        raw = pom.read_bytes()
-        if len(raw) > 8 * 1024 * 1024 or re.search(br'<!\s*(?:DOCTYPE|ENTITY)', raw, re.I):
-            raise ValueError('Unsafe or oversized POM')
-        xml = ET.fromstring(raw)
-        return [node.text.strip() for node in xml.findall('./{*}modules/{*}module') if node.text and node.text.strip()]
-    except ET.ParseError:
-        return []  # discovery works on incomplete edits; the build reports syntax failures
+def source_files(root):
+    for folder, directories, filenames in os.walk(root, followlinks=False):
+        directories[:] = sorted(d for d in directories if not ignored_directory(Path(folder) / d, root) and not (Path(folder) / d).is_symlink())
+        for name in sorted(filenames):
+            file = Path(folder) / name
+            if file.suffix == '.py' and not file.is_symlink():
+                yield file
 
 
-def module_entries(root, tool):
-    entries = []
-    seen = {root}
-    if tool == 'maven':
-        queue = [root]
-        while queue:
-            folder = queue.pop(0)
-            for name in maven_modules(folder):
-                child = (folder / name).resolve()
-                if not child.is_relative_to(root) or child in seen:
-                    continue
-                seen.add(child)
-                filename = build_file(child)
-                if filename:
-                    entries.append({'path': child.relative_to(root).as_posix(), 'root': str(child), 'buildFile': filename, 'buildTool': 'maven' if filename == 'pom.xml' else 'gradle'})
-                    queue.append(child)
-    else:
-        settings = next((root / name for name in ('settings.gradle.kts', 'settings.gradle') if (root / name).is_file()), None)
-        if settings:
-            text = settings.read_text()
-            # Static includes only; dynamic settings are reported as such by discovery.
-            text = re.sub(r'/\*.*?\*/|//[^\n]*', '', text, flags=re.S)
-            overrides = {}
-            for match in re.finditer(r"project\s*\(\s*[\"'](:?[\w:./-]+)[\"']\s*\)\.projectDir\s*=\s*file\s*\(\s*[\"']([^\"']+)[\"']\s*\)", text):
-                overrides[match.group(1).strip(':').replace(':', '/')] = match.group(2)
-            for match in re.finditer(r'(?m)^\s*include\b\s*(?:\((.*?)\)|([^\n]+))', text, re.S):
-                for name in re.findall(r'[\"\'](:?[\w:./-]+)[\"\']', match.group(1) or match.group(2)):
-                    path = name.strip(':').replace(':', '/')
-                    child = (root / overrides.get(path, path)).resolve()
-                    if child in seen or not child.is_relative_to(root):
-                        continue
-                    seen.add(child)
-                    entries.append({'path': path, 'root': str(child), 'buildFile': build_file(child), 'buildTool': 'gradle'})
-    return sorted(entries, key=lambda item: item['path'])
+def project_metadata(root):
+    config = root / 'pyproject.toml'
+    data = tomllib.loads(config.read_text()) if config.is_file() else {}
+    project, tools = data.get('project', {}), data.get('tool', {})
+    dependencies = list(project.get('dependencies', []))
+    for group in project.get('optional-dependencies', {}).values():
+        dependencies.extend(group)
+    for group in data.get('dependency-groups', {}).values():
+        dependencies.extend(item for item in group if isinstance(item, str))
+    poetry = tools.get('poetry', {})
+    for name, version in poetry.get('dependencies', {}).items():
+        dependencies.append(f'{name} {version}')
+    for group in poetry.get('group', {}).values():
+        dependencies.extend(f'{name} {version}' for name, version in group.get('dependencies', {}).items())
+    for file in sorted(root.glob('requirements*.txt')):
+        dependencies.extend(line.strip() for line in file.read_text().splitlines() if line.strip() and not line.lstrip().startswith(('#', '-')))
+    # Metadata only: never import application code during discovery.
+    fastapi = any(re.match(r'(?i)^fastapi(?:\b|\[)', dep) for dep in dependencies)
+    if not fastapi:
+        for file in source_files(root):
+            if re.search(r'(?m)^\s*(?:from\s+fastapi\b|import\s+fastapi\b)', file.read_text(errors='replace')):
+                fastapi = True
+                break
+    return {'name': project.get('name') or poetry.get('name'), 'requiresPython': project.get('requires-python'),
+            'dependencies': dependencies, 'isFastAPI': fastapi,
+            'checks': [name for name in ('ruff', 'mypy') if name in tools or any(re.match(r'(?i)^' + name + r'\b', dep) for dep in dependencies)]}
 
 
 def discover(location):
     location = Path(location).resolve()
     folder = location if location.is_dir() else location.parent
-    found = next((p for p in (folder, *folder.parents) if build_file(p) or any((p / name).is_file() for name in ('settings.gradle.kts', 'settings.gradle'))), None)
-    if not found:
-        raise ValueError(f'No Maven or Gradle project found from {location}')
-    filename = build_file(found)
-    tool = 'maven' if filename == 'pom.xml' else 'gradle'
-    root = found
-    if tool == 'maven':
-        for candidate in found.parents:
-            if (candidate / 'pom.xml').is_file() and any(Path(m['root']) == root for m in module_entries(candidate, 'maven')):
-                root = candidate
-    else:
-        root = next((p for p in (found, *found.parents) if any((p / s).is_file() for s in ('settings.gradle.kts', 'settings.gradle'))), found)
-    filename = build_file(root)
-    wrapper = root / ('mvnw' if tool == 'maven' else 'gradlew')
-    return {'root': str(root), 'buildTool': tool, 'buildFile': filename, 'wrapper': str(wrapper) if wrapper.is_file() else None,
-            'modules': module_entries(root, tool), 'discoveryScope': 'declared Maven modules or static Gradle includes; dynamic Gradle settings require build inspection'}
+    root = next((p for p in (folder, *folder.parents) if build_file(p)), None)
+    if root is None:
+        raise ValueError(f'No Python project found from {location}; expected pyproject.toml or requirements.txt')
+    metadata = project_metadata(root)
+    tool = 'uv' if (root / 'uv.lock').is_file() else ('poetry' if (root / 'poetry.lock').is_file() else 'python')
+    python = root / '.venv' / 'bin' / 'python'
+    return dict(metadata, root=str(root), buildTool=tool, buildFile=build_file(root),
+                python=str(python) if python.is_file() else sys.executable,
+                modules=[], discoveryScope='Nearest Python project; dependencies are declarations, not resolved installations')
+
+
+def python_command(info):
+    if info['buildTool'] in ('uv', 'poetry'):
+        tool = shutil.which(info['buildTool'])
+        if not tool:
+            raise ValueError(f"{info['buildTool']} is required by the project lockfile but is unavailable")
+        # Never install or synchronize dependencies as a side effect of a check.
+        return [tool, 'run', '--frozen', '--offline', '--no-sync', 'python'] if info['buildTool'] == 'uv' else [tool, 'run', 'python']
+    return [info['python']]
 
 
 def build_plan(request):
     info = discover(request.get('projectRoot') or os.getcwd())
-    tool = info['buildTool']
     tasks = request.get('tasks') or [request.get('task', 'compile')]
-    if not isinstance(tasks, list) or not tasks or len(tasks) > 8 or not all(isinstance(t, str) for t in tasks):
-        raise ValueError('tasks must be a nonempty list of at most eight task names')
-    tasks = [ALIASES[tool].get(task, task) for task in tasks]
-    allowed = MAVEN_TASKS if tool == 'maven' else GRADLE_TASKS
-    if any(task not in allowed for task in tasks):
-        raise ValueError(f'Unsupported {tool} task; allowed: {", ".join(sorted(allowed))}')
-    profiles = request.get('profiles', [])
-    if not isinstance(profiles, list) or len(profiles) > 20 or any(not isinstance(p, str) or not re.fullmatch(r'[A-Za-z0-9][\w.-]{0,99}', p) for p in profiles):
-        raise ValueError('profiles must contain simple Maven profile identifiers')
-    if profiles and tool != 'maven':
-        raise ValueError('Maven profiles are unavailable for Gradle; use project build configuration')
-    module = request.get('module')
-    if module is not None:
-        if not isinstance(module, str) or module not in {m['path'] for m in info['modules']}:
-            raise ValueError('module must match a discovered module path')
-    test_class = request.get('testClass')
-    if test_class is not None and (not isinstance(test_class, str) or not re.fullmatch(r'[A-Za-z_$][\w.$]*(?:#[A-Za-z_$][\w$]*)?', test_class)):
-        raise ValueError('testClass must be a qualified class name, optionally #method')
-    if test_class and 'test' not in tasks:
-        raise ValueError('testClass requires the test task')
-    wrapper = info['wrapper']
-    if wrapper:
-        command = [wrapper] if os.access(wrapper, os.X_OK) else ['sh', wrapper]
+    if not isinstance(tasks, list) or len(tasks) != 1 or not isinstance(tasks[0], str):
+        raise ValueError('Exactly one task is required; verify combines all configured checks')
+    task = 'verify' if tasks[0] == 'check' else tasks[0]
+    if task not in TASKS:
+        raise ValueError('Unsupported task; allowed: ' + ', '.join(sorted(TASKS)))
+    if request.get('module') is not None or request.get('profiles'):
+        raise ValueError('Python checks use the nearest project root; module/profile selectors are unsupported')
+    selection = request.get('testPath')
+    if selection is not None:
+        if task != 'test' or not isinstance(selection, str) or not re.fullmatch(r'[A-Za-z0-9_./-]+(?:\:\:[A-Za-z_][A-Za-z0-9_]*)*', selection):
+            raise ValueError('testPath must be a relative pytest file/directory, optionally ::class::test')
+        file = (Path(info['root']) / selection.split('::')[0]).resolve()
+        if not file.is_relative_to(Path(info['root'])) or not file.exists() or selection.startswith('-') or Path(selection.split('::')[0]).is_absolute():
+            raise ValueError('testPath must exist inside the project root')
+    runner = python_command(info)
+    runtime = str(Path(__file__).resolve())
+    compile_command = [*runner, runtime, '--syntax', info['root']]
+    lint_command = [*runner, '-m', 'ruff', 'check', '.']
+    type_command = [*runner, '-m', 'mypy', '.']
+    tests = [*runner, '-m', 'pytest', '--junitxml=.fastapi-tools/pytest.xml', *([selection] if selection else [])]
+    if task == 'verify':
+        commands = [compile_command]
+        if 'ruff' in info['checks']:
+            commands.append(lint_command)
+        if 'mypy' in info['checks']:
+            commands.append(type_command)
+        commands.append(tests)
+        command = [sys.executable, runtime, '--checks', json.dumps(commands)]
     else:
-        executable = shutil.which('mvn' if tool == 'maven' else 'gradle')
-        if not executable:
-            raise ValueError(f'Build check skipped: {"mvn" if tool == "maven" else "gradle"} and its project wrapper are unavailable in {info["root"]}.')
-        command = [executable]
-    if tool == 'maven':
-        command += ['-B', '-ntp', *tasks]
-        if profiles:
-            command.append('-P' + ','.join(profiles))
-        if module:
-            command += ['-pl', module, '-am']
-        if test_class:
-            command += ['-Dtest=' + test_class]
-    else:
-        command += ['--console=plain', '--no-daemon', *[(':' + module.replace('/', ':') + ':' if module else '') + task for task in tasks]]
-        if 'test' in tasks:
-            command.append('--rerun-tasks')  # fresh reports are required for run_tests
-        if test_class:
-            if '#' in test_class:
-                test_class = test_class.replace('#', '.')
-            command += ['--tests', test_class]
-    return dict(info, command=command, tasks=tasks, profiles=profiles, module=module, testClass=request.get('testClass'))
+        command = {'compile': compile_command, 'lint': lint_command, 'typecheck': type_command, 'test': tests,
+                   'package': [*runner, '-m', 'build', '--no-isolation'],
+                   'dependencies': [*runner, '-c', 'import importlib.metadata as m, json; print(json.dumps(sorted([{"name": d.metadata["Name"], "version": d.version} for d in m.distributions()], key=lambda d: d["name"].lower())))'],
+                   'migration-status': [*runner, '-m', 'alembic', 'current']}[task]
+    return dict(info, command=command, tasks=[task], profiles=[], module=None, testClass=None, testPath=selection)
 
 
 def ignored_directory(path, root):
-    relative = path.relative_to(root)
-    # A package may be named build, target, docs or node_modules. None of those
-    # names excludes source files when they occur inside a source tree.
-    if 'src' in relative.parts or path.name not in IGNORED:
+    if path.name in ('build', 'dist') and ('src' in path.relative_to(root).parts or (path / '__init__.py').is_file()):
         return False
-    if path.name in ('target', 'build', 'dist'):
-        if build_file(path) or any((path / settings).is_file() for settings in ('settings.gradle', 'settings.gradle.kts')):
-            return False  # a module can legitimately be named build or target
-        # Output names outside a module root may be real input directories.
-        return path.parent == root or bool(build_file(path.parent)) or any(Path(module['root']) == path.parent for module in module_entries(root, 'gradle'))
-    return True
+    return path.name in IGNORED or path.name.endswith('.egg-info')
 
 
 def relevant(path, root):
     relative = path.relative_to(root)
-    if 'src' in relative.parts:
-        return True
+    if path.name == '.coverage' or path.name.startswith('.coverage.'):
+        return False
     if any(ignored_directory(root / Path(*relative.parts[:index + 1]), root) for index in range(len(relative.parts) - 1)):
         return False
     # Build scripts can read arbitrary configuration names, binary fixtures,
@@ -228,7 +195,7 @@ def fingerprint(root):
 
 def state_dir(root):
     key = hashlib.sha256(str(Path(root).resolve()).encode()).hexdigest()
-    folder = Path(tempfile.gettempdir()) / f'sb-tools-build-{os.getuid()}-{key}'
+    folder = Path(tempfile.gettempdir()) / f'fastapi-tools-build-{os.getuid()}-{key}'
     try:
         folder.mkdir(mode=0o700)
     except FileExistsError:
@@ -311,34 +278,19 @@ def terminate(process, own_group):
 
 
 def test_report_snapshot(root):
-    """Read report contents while the caller owns the project build lock."""
-    reports = {}
-    excluded = {'.git', 'node_modules', '.gradle', 'src', '.idea', '.mvn', '.claude'}
-    for folder, directories, _ in os.walk(root, followlinks=False):
-        directories[:] = sorted(name for name in directories if name not in excluded
-                                and not (Path(folder) / name).is_symlink())
-        for name in ('target', 'build'):
-            if name not in directories:
-                continue
-            directories.remove(name)
-            output = Path(folder) / name
-            for report_dir in (('surefire-reports', 'failsafe-reports') if name == 'target' else ('test-results',)):
-                for report_folder, children, files in os.walk(output / report_dir, followlinks=False):
-                    children[:] = sorted(child for child in children if child not in IGNORED
-                                         and not (Path(report_folder) / child).is_symlink())
-                    for filename in sorted(files):
-                        file = Path(report_folder) / filename
-                        if file.suffix != '.xml' or file.is_symlink():
-                            continue
-                        metadata = file.stat()
-                        if metadata.st_size > 8 * 1024 * 1024:
-                            raise ValueError(f'Test report exceeds 8 MiB limit: {file}')
-                        content = file.read_bytes()
-                        if len(content) > 8 * 1024 * 1024:
-                            raise ValueError(f'Test report exceeds 8 MiB limit: {file}')
-                        reports[str(file)] = ((metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_size),
-                                              content.decode('utf-8', 'replace'))
-    return reports
+    """Read pytest's report while the caller owns the project check lock."""
+    file = Path(root) / '.fastapi-tools' / 'pytest.xml'
+    if file.parent.is_symlink() or file.is_symlink():
+        raise ValueError('Unsafe test report path')
+    if not file.is_file():
+        return {}
+    metadata = file.stat()
+    if metadata.st_size > 8 * 1024 * 1024:
+        raise ValueError('Test report exceeds 8 MiB limit')
+    content = file.read_bytes()
+    if len(content) > 8 * 1024 * 1024:
+        raise ValueError('Test report exceeds 8 MiB limit')
+    return {str(file): ((metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_size), content.decode('utf-8', 'replace'))}
 
 
 def run_build(request, own_process_group=False):
@@ -357,6 +309,11 @@ def run_build(request, own_process_group=False):
         if collect_reports and plan['tasks'] != ['test']:
             raise ValueError('collectTestReports requires only the test task')
         reports_before = test_report_snapshot(plan['root']) if collect_reports else {}
+        if plan['tasks'] in (['test'], ['verify']):
+            report_dir = Path(plan['root']) / '.fastapi-tools'
+            if report_dir.is_symlink() or (report_dir / 'pytest.xml').is_symlink():
+                raise ValueError('Unsafe test report path')
+            report_dir.mkdir(exist_ok=True)
         cache_diagnostic = None
         try:
             before = fingerprint(plan['root'])
@@ -364,7 +321,7 @@ def run_build(request, own_process_group=False):
             before, cache_diagnostic = None, str(error)
         state = state_read(folder)
         verification = plan['tasks'] in (['verify'], ['check'])
-        scope = json.dumps([plan['buildTool'], plan['tasks'], plan['profiles'], plan['module'], plan['testClass']], separators=(',', ':'))
+        scope = json.dumps([plan['buildTool'], plan['tasks'], plan['profiles'], plan['module'], plan['testPath']], separators=(',', ':'))
         scopes = state.get('verifiedScopes', {})
         if not isinstance(scopes, dict):
             scopes = {}
@@ -463,6 +420,214 @@ def mark_pending(location):
     return info
 
 
+def literal(node):
+    try:
+        return ast.literal_eval(node)
+    except (ValueError, TypeError):
+        return None
+
+
+def module_name(file, root):
+    parts = list(file.relative_to(root).with_suffix('').parts)
+    if parts and parts[0] == 'src':
+        parts.pop(0)
+    if parts and parts[-1] == '__init__':
+        parts.pop()
+    return '.'.join(parts)
+
+
+def static_endpoints(root):
+    """AST evidence only. No application imports or dependency execution."""
+    objects, edges, routes, aliases, warnings = {}, [], [], {}, []
+    for file in source_files(root):
+        relative, module = file.relative_to(root).as_posix(), module_name(file, root)
+        try:
+            tree = ast.parse(file.read_bytes())
+        except SyntaxError as error:
+            warnings.append(f'{relative}:{error.lineno}: {error.msg}')
+            continue
+        names = aliases.setdefault(module, {})
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom):
+                parent = module.split('.') if file.name == '__init__.py' else module.split('.')[:-1]
+                base = '.'.join(parent[:len(parent) - node.level + 1]) if node.level else ''
+                imported = '.'.join(x for x in (base, node.module) if x)
+                for name in node.names:
+                    names[name.asname or name.name] = imported + '.' + name.name
+            elif isinstance(node, ast.Import):
+                for name in node.names:
+                    names[name.asname or name.name.split('.')[0]] = name.name if name.asname else name.name.split('.')[0]
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Call):
+                call = node.value
+                kind = ast.unparse(call.func).split('.')[-1]
+                kind = names.get(kind, kind).split('.')[-1]
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if kind in ('FastAPI', 'APIRouter'):
+                    keywords = {kw.arg: literal(kw.value) for kw in call.keywords}
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            objects[module + '.' + target.id] = {'kind': kind, 'prefix': keywords.get('prefix', ''), 'file': relative}
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                call = node.value
+                if isinstance(call.func, ast.Attribute) and call.func.attr == 'include_router' and call.args:
+                    keywords = {kw.arg: literal(kw.value) for kw in call.keywords}
+                    edges.append((module, ast.unparse(call.func.value), ast.unparse(call.args[0]), keywords.get('prefix', ''), relative))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for dec in node.decorator_list:
+                    if not isinstance(dec, ast.Call) or not isinstance(dec.func, ast.Attribute):
+                        continue
+                    method = dec.func.attr
+                    if method not in ('get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace', 'api_route'):
+                        continue
+                    keywords = {kw.arg: literal(kw.value) for kw in dec.keywords}
+                    route = literal(dec.args[0]) if dec.args else keywords.get('path')
+                    if not isinstance(route, str):
+                        warnings.append(f'{relative}:{node.lineno}: computed route path is unresolved')
+                        continue
+                    methods = (keywords.get('methods') or ['GET']) if method == 'api_route' else [method.upper()]
+                    if not isinstance(methods, (list, tuple)) or not all(isinstance(m, str) for m in methods):
+                        warnings.append(f'{relative}:{node.lineno}: computed methods are unresolved')
+                        continue
+                    for verb in methods:
+                        routes.append((module, ast.unparse(dec.func.value), {'method': verb.upper(), 'path': route, 'file': relative, 'line': node.lineno, 'function': node.name}))
+    def resolve(module, name):
+        first, *rest = name.split('.')
+        return '.'.join([aliases.get(module, {}).get(first, module + '.' + first), *rest])
+    linked = {}
+    for module, owner, router, prefix, file in edges:
+        owner, router = resolve(module, owner), resolve(module, router)
+        if owner not in objects or router not in objects or not isinstance(prefix, str):
+            warnings.append(f'{file}: unresolved include_router({router})')
+            continue
+        linked.setdefault(owner, []).append((router, prefix))
+    endpoints, reached = [], set()
+    def visit(owner, prefix, stack):
+        if owner in stack:
+            warnings.append('Cyclic router inclusion: ' + owner)
+            return
+        own_prefix = objects[owner]['prefix']
+        if not isinstance(own_prefix, str):
+            warnings.append('Computed router prefix: ' + owner)
+            return
+        prefix += own_prefix
+        reached.add(owner)
+        for module, name, route in routes:
+            if resolve(module, name) == owner:
+                endpoints.append(dict(route, path=prefix + route['path']))
+        for router, extra in linked.get(owner, []):
+            visit(router, prefix + extra, stack | {owner})
+    for name, obj in objects.items():
+        if obj['kind'] == 'FastAPI':
+            visit(name, '', set())
+    unmounted = [route for module, name, route in routes if resolve(module, name) not in reached]
+    return {'endpoints': endpoints, 'count': len(endpoints), 'unmounted': unmounted, 'warnings': warnings,
+            'limitation': 'Static top-level constructors, decorators and include_router calls only; factories, re-exports, mounts, conditional and computed registration need runtime OpenAPI.'}
+
+
+def migration_inventory(root):
+    import configparser
+    locations, warnings = [], []
+    config = root / 'alembic.ini'
+    if config.is_file():
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.read(config)
+        values = parser['alembic'] if parser.has_section('alembic') else {}
+        script = values.get('script_location', 'alembic').replace('%(here)s', str(root))
+        version_locations = values.get('version_locations')
+        if version_locations:
+            separator = values.get('path_separator', values.get('version_path_separator', 'space'))
+            delimiter = {'os': os.pathsep, 'space': None, 'newline': '\n', ':': ':', ';': ';'}.get(separator)
+            locations = version_locations.replace('%(here)s', str(root)).split(delimiter)
+        else:
+            locations = [str(Path(script) / 'versions')]
+    else:
+        locations = ['alembic/versions', 'migrations/versions']
+    files = set()
+    for location in locations:
+        directory = (root / location.strip()).resolve()
+        if not directory.is_relative_to(root):
+            warnings.append('Skipped external migration location: ' + location)
+            continue
+        files.update(source_files(directory))
+    migrations, errors, risks, ids = [], [], [], {}
+    for file in sorted(files):
+        relative = file.relative_to(root).as_posix()
+        try:
+            tree = ast.parse(file.read_bytes())
+        except SyntaxError as error:
+            errors.append({'file': relative, 'code': 'syntax', 'message': str(error)})
+            continue
+        values, unresolved = {}, set()
+        for node in tree.body:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        values[target.id] = literal(node.value)
+                        if values[target.id] is None and not (isinstance(node.value, ast.Constant) and node.value.value is None):
+                            unresolved.add(target.id)
+        revision, down = values.get('revision'), values.get('down_revision')
+        if file.name == '__init__.py':
+            continue
+        if 'down_revision' not in values or unresolved & {'down_revision', 'depends_on'}:
+            errors.append({'file': relative, 'code': 'metadata', 'message': 'Expected explicit literal down_revision and depends_on metadata'})
+            continue
+        if not isinstance(revision, str) or not revision:
+            errors.append({'file': relative, 'code': 'revision', 'message': 'Expected a nonempty literal revision identifier'})
+            continue
+        if down is not None and not isinstance(down, str) and not (isinstance(down, (tuple, list)) and all(isinstance(x, str) for x in down)):
+            errors.append({'file': relative, 'code': 'down-revision', 'message': 'Expected literal down_revision, tuple of parents or None'})
+            continue
+        parents = [down] if isinstance(down, str) else list(down or [])
+        dependencies = values.get('depends_on') or []
+        dependencies = [dependencies] if isinstance(dependencies, str) else dependencies
+        if not isinstance(dependencies, (list, tuple)) or not all(isinstance(x, str) for x in dependencies):
+            errors.append({'file': relative, 'code': 'depends-on', 'message': 'Expected literal dependency identifiers'})
+            dependencies = []
+        entry = {'file': relative, 'revision': revision, 'downRevision': parents, 'dependsOn': list(dependencies)}
+        migrations.append(entry)
+        if revision in ids:
+            errors.append({'file': relative, 'code': 'duplicate-revision', 'message': 'Duplicate revision ' + revision})
+        ids[revision] = entry
+        upgrade = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'upgrade'), None)
+        if upgrade is None:
+            errors.append({'file': relative, 'code': 'upgrade', 'message': 'Missing upgrade()'})
+        else:
+            for node in ast.walk(upgrade):
+                if isinstance(node, ast.Call):
+                    name = ast.unparse(node.func)
+                    if name.endswith(('.drop_table', '.drop_column', '.drop_index', '.alter_column')):
+                        risks.append({'file': relative, 'line': node.lineno, 'code': 'ddl-risk', 'message': name + ': review data loss, locking and rolling compatibility'})
+                    if name.endswith('.execute') and node.args:
+                        sql = literal(node.args[0])
+                        if isinstance(sql, str) and re.search(r'(?i)\\b(?:DROP|TRUNCATE|DELETE)\\b', sql):
+                            risks.append({'file': relative, 'line': node.lineno, 'code': 'destructive-sql', 'message': 'Review destructive SQL in upgrade()'})
+    graph = {entry['revision']: entry['downRevision'] + entry['dependsOn'] for entry in migrations}
+    active, visited = set(), set()
+    def walk(revision):
+        if revision in active:
+            errors.append({'code': 'cycle', 'message': 'Cyclic revision graph: ' + revision})
+            return
+        if revision in visited:
+            return
+        active.add(revision)
+        for parent in graph.get(revision, []):
+            if parent not in ids:
+                errors.append({'code': 'missing-parent', 'message': revision + ' references missing revision ' + parent})
+            else:
+                walk(parent)
+        active.remove(revision)
+        visited.add(revision)
+    for revision in graph:
+        walk(revision)
+    referenced = {parent for parents in graph.values() for parent in parents}
+    heads = sorted(set(ids) - referenced)
+    if len(heads) > 1:
+        warnings.append('Multiple heads: confirm intentional branches or add a merge revision')
+    return {'mode': 'lint', 'databaseAccess': False, 'migrations': migrations, 'heads': heads, 'errors': errors, 'risks': risks, 'warnings': warnings,
+            'limitation': 'Static revision graph and upgrade risks only; no env.py execution or database access. Applied-state immutability requires database/history evidence.'}
+
+
 def main():
     try:
         request = json.load(sys.stdin)
@@ -475,6 +640,11 @@ def main():
             result = build_plan(request)
         elif action == 'run':
             result = run_build(request)
+        elif action == 'analyze':
+            result = discover(request.get('projectRoot') or os.getcwd())
+            result['endpoints'] = static_endpoints(Path(result['root']))
+        elif action == 'migrations':
+            result = migration_inventory(Path(discover(request.get('projectRoot') or os.getcwd())['root']))
         elif action == 'mark':
             result = mark_pending(request.get('projectRoot') or os.getcwd())
         else:
@@ -486,4 +656,14 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == '--syntax':
+        for file in source_files(Path(sys.argv[2])):
+            compile(file.read_bytes(), str(file), 'exec')
+        print('Python syntax check passed')
+    elif len(sys.argv) > 1 and sys.argv[1] == '--checks':
+        for command in json.loads(sys.argv[2]):
+            code = subprocess.call(command, stdin=subprocess.DEVNULL)
+            if code:
+                sys.exit(code)
+    else:
+        main()

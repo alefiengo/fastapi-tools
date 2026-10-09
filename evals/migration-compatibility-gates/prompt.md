@@ -1,7 +1,7 @@
 ---
-description: Migration requires pre-change and runtime evidence
+description: Review rolling migration safety.
 max_turns: 10
-allowed_tools: [Read, Glob, Grep, Skill]
+allowed_tools: [Read, Glob, Grep, Skill, Agent]
 ---
 
-Plan our Boot 3.5 to 4 migration. We use custom Jackson serialization, browser sessions, a PostgreSQL schema and independently released consumers. Is compiling enough?
+Review an Alembic migration that renames orders.owner to owner_id and immediately removes the old column while old FastAPI workers still run. Provide release gates.

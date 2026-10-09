@@ -29,8 +29,8 @@ class SuppliedFixtureTests(unittest.TestCase):
         self.assertEqual(supplied, actual, "regenerate prompt context after changing fixtures")
 
     def test_persistence_failure_is_after_write_and_has_real_constraint(self):
-        source = (CASE / "fixtures" / "OrderService.java").read_text()
-        self.assertLess(source.index("orders.markApproved"), source.index("orders.appendEvent"))
+        source = (CASE / "fixtures" / "order_service.py").read_text()
+        self.assertLess(source.index("UPDATE orders"), source.index("INSERT INTO events"))
         schema = (CASE / "fixtures" / "schema.sql").read_text()
         self.assertIn("CHECK (event_id <> 'FAIL_DB')", schema)
         self.assertIn("VALUES (101, 'alice', 'PENDING')", schema)

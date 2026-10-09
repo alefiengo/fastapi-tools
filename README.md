@@ -1,173 +1,164 @@
-# Spring Boot Tools for Claude Code
+# FastAPI Tools for Claude Code
 
-[![CI](https://github.com/alefiengo/spring-boot-tools/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/alefiengo/spring-boot-tools/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/alefiengo/spring-boot-tools)](https://github.com/alefiengo/spring-boot-tools/releases/latest)
+[![CI](https://github.com/alefiengo/fastapi-tools/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/alefiengo/fastapi-tools/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Claude Code plugin for developing and reviewing Spring Boot applications.
-It provides 15 skills, seven specialist agents, five hooks and six MCP tools.
-Build execution and verification share one runtime so hooks and tools can
-coordinate their work.
+A Claude Code plugin for developing and reviewing FastAPI applications: 15 skills,
+seven specialist agents, five hooks and six MCP tools. Hooks and MCP share Python
+project discovery, process locks and verification records.
 
 ## Requirements
 
-- Node.js 20.3 or newer and npm for the MCP server.
-- Python 3.11 or newer and Bash on Linux, macOS or WSL.
-- A JDK compatible with the application and its Maven or Gradle wrapper.
-  A global build-tool installation is used when no wrapper is available.
-- Optional Java diagnostics: an installed Eclipse JDT Language Server with
-  its `jdtls` launcher on `PATH`.
+- Node.js 20.3+ and npm for the MCP server.
+- Python 3.11+ and Bash on Linux, macOS or WSL for the plugin runtime.
+- The application's compatible Python 3.11+ environment and installed test dependencies.
+- uv for projects with uv.lock, Poetry for projects with poetry.lock; otherwise
+  .venv/bin/python is preferred, with the runtime interpreter as fallback.
+- Optional Python diagnostics: pyright-langserver on PATH.
 
-Skills target Spring Boot 4 applications and include migration guidance for
-Boot 3 projects. Inspect the application's build before selecting dependency
-versions or adapting examples.
+Inspect the application's dependency constraints. Guidance covers FastAPI,
+Pydantic, SQLAlchemy/SQLModel and Alembic without prescribing an application version.
 
 ## Install and use
 
-For local use, clone the plugin and install its server dependencies:
+Install from GitHub:
 
 ```bash
-git clone https://github.com/alefiengo/spring-boot-tools ~/dev/spring-boot-tools
-npm ci --prefix ~/dev/spring-boot-tools/mcp-server
-cd /path/to/your/spring-project
-claude --plugin-dir ~/dev/spring-boot-tools
+git clone https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
+npm ci --prefix ~/dev/fastapi-tools/mcp-server
+cd /path/to/your/fastapi-project
+claude --plugin-dir ~/dev/fastapi-tools
 ```
-
-Once loaded, try a request such as:
-
-```text
-Inspect this Spring Boot project, identify its build tool and modules,
-then run its tests and summarize any failures.
-```
-
-For a focused review, use `/sb-pr-review`. Claude selects the relevant
-reviewers and coordinates a verification gate.
-
-The plugin registers its MCP server, hooks and optional Java language server
-from `.mcp.json`, `hooks/hooks.json` and `.lsp.json`.
 
 For marketplace installation:
 
 ```bash
-claude plugin marketplace add https://github.com/alefiengo/spring-boot-tools
-claude plugin install spring-boot-tools@spring-boot-tools-marketplace
+claude plugin marketplace add https://github.com/alefiengo/fastapi-tools
+claude plugin install fastapi-tools@fastapi-tools-marketplace
 ```
 
-Install the MCP dependencies with `npm ci` in the installed plugin's
-`mcp-server/` directory. A team can enable the plugin in its application's
-`.claude/settings.json`:
+From an existing local checkout:
 
-```json
-{
-  "enabledPlugins": {
-    "spring-boot-tools@spring-boot-tools-marketplace": true
-  }
-}
+```bash
+# From this repository:
+npm ci --prefix mcp-server
+cd /path/to/your/fastapi-project
+claude --plugin-dir /absolute/path/to/claude-fastapi-tools
 ```
 
-Configure `app_port` through the plugin configuration. It defaults to 8080
-and supplies the default application port for Actuator inspection. Project
-build files determine the build tool and dependency versions.
+For a local marketplace installation:
+
+```bash
+claude plugin marketplace add /absolute/path/to/claude-fastapi-tools
+claude plugin install fastapi-tools@fastapi-tools-marketplace
+```
+
+Install server dependencies in the installed plugin's mcp-server directory.
+Try: "Inspect this FastAPI project, run its tests and summarize failures."
+Use `/fastapi-pr-review` for a focused review. app_port defaults to 8000 and
+sets the default MCP HTTP inspection port. The plugin registers its server,
+hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
 
 ## Skills
 
-Claude selects skills from their descriptions and the request context. Each
-skill lives in `skills/<name>/SKILL.md`.
+- `fastapi-api-contracts`
+- `fastapi-build-run`
+- `fastapi-ci`
+- `fastapi-codegen`
+- `fastapi-contract-testing`
+- `fastapi-database`
+- `fastapi-docker`
+- `fastapi-load-testing`
+- `fastapi-modular-architecture`
+- `fastapi-observability`
+- `fastapi-performance`
+- `fastapi-pr-review`
+- `fastapi-pydantic-v1-to-v2-migration`
+- `fastapi-security-hardening`
+- `fastapi-testing`
 
-| Skill | Purpose |
-|---|---|
-| `spring-boot-api-contracts` | REST contracts, error responses and OpenAPI |
-| `spring-boot-build-run` | Build, startup, profiles and troubleshooting |
-| `spring-boot-ci` | Build gates, scans and image publication in CI |
-| `spring-boot-codegen` | Controllers, services, entities, repositories and DTOs |
-| `spring-boot-contract-testing` | Pact and Spring Cloud Contract workflows |
-| `spring-boot-database` | Flyway, persistence mappings and SQL |
-| `spring-boot-docker` | Images, Compose, persistence and container startup |
-| `spring-boot-load-testing` | Gatling, k6 and measurable acceptance criteria |
-| `spring-boot-modulith` | Module boundaries and architecture verification |
-| `spring-boot-observability` | Logs, metrics, traces and Actuator diagnostics |
-| `spring-boot-performance` | Query behavior, pools, caching and measurement |
-| `spring-boot-security-hardening` | Authentication, authorization, cookies and CSRF |
-| `spring-boot-testing` | Unit, slice and integration tests |
-| `spring-boot-3-to-4-migration` | Staged migration from Spring Boot 3 to 4 |
-| `sb-pr-review` | Relevant reviewers, one verification gate and a shared verdict |
+Skills activate for FastAPI work through their descriptions. PR review is an
+explicit command. The Pydantic migration skill checks installed versions before
+changing models, settings or serialization.
 
-For example, ask Claude to design an API, investigate slow queries or write
-tests for a specific behavior. Use `/sb-pr-review` for a review of the current
-changes.
+## Agents
 
-## Specialist agents
+- `fastapi-api-designer`
+- `fastapi-architect`
+- `fastapi-code-reviewer`
+- `fastapi-docker-reviewer`
+- `fastapi-migration-reviewer`
+- `fastapi-runtime-reviewer`
+- `fastapi-test-writer`
 
-| Agent | Responsibility | Output permissions |
-|---|---|---|
-| `sb-architect` | Domain design, boundaries and implementation planning | Design documents |
-| `sb-api-designer` | Routes, payloads, errors and API contracts | Contract documents |
-| `sb-code-reviewer` | Correctness, security and maintainability | Read-only |
-| `sb-runtime-reviewer` | Transactions, query paths, concurrency and N+1 | Read-only |
-| `sb-migration-reviewer` | Migration history, compatibility and locking | Read-only |
-| `sb-docker-reviewer` | Packaging, persistence, startup and CI | Read-only |
-| `sb-test-writer` | Tests tied to observable behavior and risks | Test sources and fixtures |
-
-Ask for an agent by name when a specific role is useful. Design before
-implementation; select reviewers from the changed behavior. The caller
-supplies reviewers with diffs and build results. Changes confined to prose
-need no application build or application reviewers.
+Reviewers are read-only. Architect/API designer write design or contract documents;
+test-writer writes tests and fixtures. The caller owns execution and provides
+verification evidence. Review selects only roles relevant to the change.
 
 ## MCP tools
 
-| Tool | Responsibility |
+| Tool | Behavior |
 |---|---|
-| `analyze_project` | Discover projects/modules, declared dependencies, configuration and persistence mappings |
-| `run_build` | Execute controlled Maven/Gradle tasks with module/profile scope |
-| `run_tests` | Run tests and summarize fresh XML reports and failures |
-| `check_migrations` | Inspect migration names, versions, ordering and SQL risks; explicitly request database status |
-| `openapi_endpoints` | Inspect static mappings or runtime OpenAPI and compare them |
-| `actuator_health` | Inspect health, readiness and liveness with access diagnostics |
+| analyze_project | Nearest Python project, declared dependencies, environment and AST routes |
+| run_build | compile, lint, typecheck, package, dependencies or verify/check |
+| run_tests | pytest, optional relative testPath, fresh JUnit summaries |
+| check_migrations | Alembic graph/errors/upgrade risks; explicit status runs alembic current |
+| openapi_endpoints | Static, runtime /openapi.json or comparison; configurable documentPath |
+| app_health | Selected health/readiness/liveness routes with configurable paths |
 
-Static inventories describe available source evidence. Runtime endpoints and
-configured database inspection provide additional evidence when requested.
+`compile` checks Python syntax without executing imports. `lint` uses Ruff;
+`typecheck` uses mypy. `verify` runs syntax, Ruff/mypy when declared in pyproject
+or requirements, then the full pytest suite. `package` uses build --no-isolation.
+Missing dependencies and pytest's no-tests exit code are failures. Tools do not
+install dependencies: uv uses --frozen --offline --no-sync. Synchronize the project
+environment explicitly before running checks. Test selectors must remain inside
+the project. Workspace/module aggregation is outside static discovery.
 
-## Automatic hooks
+Static analysis never imports application modules or Alembic env.py. Dependencies
+are declarations, not a resolved graph; includes in requirements files and dynamic
+setup metadata need manual inspection. Route analysis supports top-level app/router
+constructors, imported routers, literal prefixes and decorators. Factories, mounts,
+re-exports and computed/conditional registrations require runtime OpenAPI evidence.
+Alembic lint inspects literal revisions, parents, dependencies, cycles and heads;
+it does not establish which migrations have been applied.
+
+FastAPI has no built-in health routes. Defaults are /health, /health/ready and
+/health/live; supply `paths` matching the application. HTTP inspection accepts an
+explicit baseUrl, fetches no external schema references and forwards no credentials.
+
+## Hooks and verification
 
 | Hook | Event | Behavior |
 |---|---|---|
-| `guard-secrets` | Before Write/Edit | Inspect proposed configuration for hard-coded credentials |
-| `guard-ddl` | Before Write/Edit | Reject destructive Hibernate schema settings outside recognized development configuration |
-| `lint-migration` | After Write/Edit | Check migration names and flag destructive SQL |
-| `post-edit-compile` | After Write/Edit | Record relevant edits for batched verification |
-| `verify-on-stop` | Stop | Run or reuse an equivalent successful Maven verify / Gradle check |
+| guard-secrets | PreToolUse | Inspect proposed settings/config/.env credentials |
+| guard-ddl | PreToolUse | Reject metadata.drop_all outside test/dev/local helpers |
+| lint-migration | PostToolUse | Report Alembic revision errors and upgrade risks |
+| post-edit-compile | PostToolUse | Record relevant edits for batched verification |
+| verify-on-stop | Stop | Run or reuse equivalent successful full verification |
 
-Verification reuse requires matching project inputs, task, module and
-profiles. Failed/cancelled builds and compile/test-only results cannot satisfy
-a full verification gate. Explicit reruns can force execution. The shared
-runtime serializes plugin builds for a project and captures test reports
-inside that lock.
+Build hooks activate only for projects with a FastAPI declaration or import.
+Prose-only inputs are excluded from fingerprints. Checks serialize per project;
+reuse requires matching task, test scope, environment and file contents. Failed,
+cancelled or targeted test runs cannot satisfy the full gate. Force a rerun with
+`run_build` force:true (CLI reuse:false). Generated state stays in private temporary
+directories; pytest reports are written to the target project's .fastapi-tools/.
 
-## Repository layout
+Guards cover common scalar settings and direct Python assignments/calls. They are
+review aids, not complete secret scanners or an enforcement boundary. Malformed
+hook input or missing Python produces a diagnostic. Keep independent CI checks.
 
-Versioned top-level directories and configuration files:
+## Development
 
-| Path | Contents |
-|---|---|
-| `.claude-plugin/` | Plugin and marketplace manifests |
-| `.github/` | CI workflow, Dependabot configuration, issue forms and PR template |
-| `agents/` | Specialist design, review and test-writing roles |
-| `docs/` | Architecture, shared runtime behavior and operational limits |
-| `evals/` | Behavioral prompts, graders, fixtures and frozen-response judge tooling |
-| `hooks/` | Event registration, Bash launchers and Python hook implementation |
-| `mcp-server/` | Node.js MCP server, package metadata and dependency lockfile |
-| `runtime/` | Shared project discovery, build execution and local gate records |
-| `skills/` | Task guidance in one `SKILL.md` per skill |
-| `tests/` | Deterministic regression suites and executable Java/Pact/Gatling examples |
-| `.gitignore` | Exclusions for local state, dependencies and generated artifacts |
-| `.lsp.json` | Optional Java language-server registration |
-| `.mcp.json` | MCP server launch configuration and project/user settings |
+```bash
+node --check mcp-server/index.js
+bash tests/run-all.sh
+# Install example-only dependencies, then exercise a real FastAPI lifecycle:
+python3 -m pip install -r tests/examples/requirements.txt
+bash tests/examples/check.sh
+```
 
-The root documentation consists of this README, `CONTRIBUTING.md`,
-`SECURITY.md` and `LICENSE`. Generated dependencies, caches and evaluation
-reports are excluded from version control.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for validation and development,
-[evals/README.md](evals/README.md) for model evaluations, and
-[SECURITY.md](SECURITY.md) for security reporting and trust boundaries.
-The project is licensed under the [MIT license](LICENSE).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
+[behavioral evaluations](evals/README.md) and [SECURITY.md](SECURITY.md).
+Licensed under the [MIT license](LICENSE).
+Adapted from [Spring Boot Tools](https://github.com/alefiengo/spring-boot-tools)
+for FastAPI and Python.

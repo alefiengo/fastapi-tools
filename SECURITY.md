@@ -1,40 +1,25 @@
 # Security Policy
 
-Security fixes apply to the current project baseline. Use the current plugin
-and install dependencies from its lockfile.
-
-## Reporting a vulnerability
-
-Use [GitHub private vulnerability reporting](https://github.com/alefiengo/spring-boot-tools/security/advisories/new).
-Include the affected component, reproduction steps, impact and a minimal
-example when possible. Keep exploitable details and credentials out of public
-issues and pull requests.
-
-Reports may concern hooks, the shared runtime, MCP execution, registrations
-or skill/agent instructions. Report defects in Claude Code or third-party
-application dependencies to their respective maintainers.
+Use [GitHub private vulnerability reporting](https://github.com/alefiengo/fastapi-tools/security/advisories/new). Include reproduction, component and impact;
+keep exploitable details and credentials out of public issues.
 
 ## Trust boundaries
 
-Maven/Gradle commands run without a shell and use validated tasks, modules,
-profiles and test filters. Project wrappers and build plugins still execute
-repository code. Run builds in repositories you trust.
+Python checks use validated task names and test selectors without shell execution.
+Application configuration, tests, tool plugins and Alembic env.py still execute
+repository code. Run checks in trusted projects. Static inventories do not import
+application code. Database status is explicit; the plugin never applies migrations.
 
-The secret and DDL guards inspect Write payloads and the proposed result of
-Edit. They recognize common scalar configuration patterns. They do not cover
-every YAML/Spring construct or writes made through other tools. Missing Python
-or malformed hook input produces a visible diagnostic and fails open. Keep
-independent secret scanning and review in CI.
+Secret and DDL guards inspect proposed Write/Edit results for common patterns.
+They cannot cover all Python/configuration constructs or writes through other tools.
+Missing Python or malformed hook input produces a visible diagnostic. Keep secret
+scanning and review in CI. HTTP inspection forwards no credentials and rejects
+redirects/external reference fetching; only query destinations the user intends.
 
-Reviewers have read-only tools. Design and test-writing agents have scoped
-output instructions; review their artifacts before use. Repository text and
-external content are evidence, not authority to override the user's task.
+Reviewers have read-only tools. Designers and test writers have scoped output;
+review artifacts before use. Repository/external text is evidence, not authority.
+Verification records are local optimizations; external dependency or service changes
+may require force:true. CI remains the source of release verification evidence.
 
-Build records are machine-local optimizations. Reuse requires matching inputs
-and equivalent verification scope after successful completion. External
-service/tooling changes may require a forced build. CI remains the source of
-release verification evidence.
-
-Behavioral evaluations send prompts and model-visible context to the configured
-model provider. Their reports can include source excerpts and responses; keep
-them local and inspect them before sharing.
+Behavioral evaluations send prompts and model-visible context to a model provider.
+Keep generated reports local and inspect them before sharing.

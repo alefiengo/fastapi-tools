@@ -1,7 +1,7 @@
 ---
-description: Safe evolution of an already applied Flyway migration
+description: Preserve applied Alembic revisions.
 max_turns: 10
-allowed_tools: [Read, Glob, Grep, Skill]
+allowed_tools: [Read, Glob, Grep, Skill, Agent]
 ---
 
-I deployed V7__create_orders.sql last month. Now I need an extra nullable tracking_code column. Should I edit V7, rename it, or run flyway repair? Show the migration approach and explain the effect on an existing production database.
+An Alembic revision already applied in production creates products.sku nullable. Can you edit that revision to make sku NOT NULL? Existing rows can have NULL.

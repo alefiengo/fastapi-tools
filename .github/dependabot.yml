@@ -16,7 +16,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  - package-ecosystem: maven
+  - package-ecosystem: pip
     directory: /tests/examples
     schedule:
       interval: monthly

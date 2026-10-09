@@ -1,77 +1,52 @@
-# Architecture and operational behavior
+# Architecture
 
-## Registration and responsibilities
+The Node MCP server delegates project discovery, AST inventories and finite
+checks to runtime/project_runtime.py, a Python 3.11+ standard-library runtime.
+Bash hook launchers invoke hooks/scripts/hook-runtime.py, which shares that
+runtime. Application code is never imported by static inspection.
 
-`.claude-plugin/plugin.json` describes the plugin and its `app_port` option.
-The marketplace points to this plugin. `.mcp.json` launches the Node.js server
-with the project root and application port; `hooks/hooks.json` registers Bash
-launchers backed by a Python standard-library hook implementation. `.lsp.json`
-registers an optional externally installed Java language server.
+## Discovery and commands
 
-Skills provide task guidance. Agents restrict specialist work to review,
-design or test-writing scopes. The MCP server provides six Spring-aware tools;
-it delegates builds to the same runtime used by hooks.
+Walk upward to the nearest pyproject.toml, requirements.txt, setup.cfg or setup.py.
+Read TOML and plain root requirements declarations. uv.lock selects uv, poetry.lock
+selects Poetry, otherwise use .venv/bin/python or the runtime interpreter. Dynamic
+setup metadata, requirements includes and workspace aggregation are outside the
+static inventory. Hooks verify only projects declaring or importing FastAPI.
 
-## Project discovery and execution
+Tasks are allowlisted and invoked as argument arrays without a shell. verify
+checks syntax, configured Ruff/mypy and pytest sequentially. uv does not sync or
+access the network during checks. Project tool configuration, test plugins and
+Alembic env.py are executable code when their associated task runs; trust the
+repository. migration-status executes current, never upgrade/downgrade.
 
-`runtime/project_runtime.py` discovers Maven/Gradle projects, modules and
-wrappers, validates supported tasks and constructs argument arrays. Wrappers
-are preferred to global installations. Requested modules/profiles determine
-execution scope.
+## Coordination
 
-Each project has a machine-local build lock and records in a private temporary
-state directory. Plugin builds acquire that lock before executing. Timeouts,
-cancellation and output limits terminate the build process tree; failed or
-cancelled attempts invalidate reusable verification success.
+A private per-user/per-project temporary directory holds an advisory flock and
+atomic state. All finite tasks acquire the same lock. File contents, modes,
+environment and runtime implementation form the input fingerprint. Generated
+caches, .venv, .fastapi-tools and output directories are excluded. External source
+symlinks disable reuse; they never count as verified inputs. Limits bound file
+count, bytes, subprocess output and total time including lock wait.
 
-`run_tests` snapshots report metadata and contents before and after execution
-inside the lock. It returns summaries of fresh reports and structured test
-failures, ignoring unchanged reports from earlier executions. The lock
-coordinates plugin invocations; a separately launched build does not
-participate in that coordination.
+Only unchanged successful verify results are reusable at equivalent scope. Any
+new attempt invalidates old success. Changing inputs during a check prevents
+reuse and is exposed to callers. Post-edit hints are atomic and do not wait for
+an active build. Stop independently checks final inputs, including edits through
+other tools. The stop_hook_active flag prevents recursive Stop invocations.
 
-## Verification reuse
+pytest writes .fastapi-tools/pytest.xml. Snapshot contents and freshness are read
+inside the project lock, so a queued test run cannot claim another run's reports.
+JUnit parsing rejects entities/DTDs and oversized reports. Failed commands retain
+stdout/stderr and stale report diagnostics. Cancellation/timeout kills descendants.
 
-Post-edit hooks record relevant changes without launching a build for each
-file. The Stop hook requests Maven `verify` or Gradle `check`. MCP and PR review
-can share a completed equivalent verification gate.
+## Evidence limits
 
-Reuse requires successful full verification with unchanged inputs and matching
-build tool, task, module, test filter and profile scope. Compilation or a test
-run alone cannot satisfy that gate. Content fingerprints cover local files,
-execution environment and runtime implementation. Prose outside source trees
-and recognized output/state directories are excluded. Symlink, oversized or
-unreadable inputs prevent reuse but still allow execution.
+AST routes resolve ordinary imported routers and literal prefixes. Runtime OpenAPI
+confirms registered routes; factories, mounts and dynamic registration need it.
+Alembic AST lint checks literal revision graphs, missing parents, duplicates, cycles,
+multiple heads and upgrade DDL risks. It neither imports env.py nor queries the
+applied history. Explicit status and HTTP queries provide additional evidence.
 
-Force execution when external tools/services changed or the application uses
-excluded artifacts as build inputs. Local records are an optimization; they
-are not a replacement for CI.
-
-## Inspection limits
-
-Source inventories use literal configuration, dependency declarations,
-annotations and SQL. Parent builds, catalogs, computed routes and runtime
-configuration can provide information unavailable to static inspection.
-Unknown evidence should stay unknown.
-
-Runtime OpenAPI and Actuator inspection use explicit URLs and report access,
-endpoint and application failures separately. Migration database status
-requires an explicitly requested mode and the application's configured Flyway
-plugin/database. Local migration lint does not prove database compatibility.
-
-Secret and DDL hooks are heuristic configuration guards. Reviewers depend on
-the caller for diffs and executable build evidence. See
-[SECURITY.md](../SECURITY.md) for trust boundaries.
-
-## Validation layers
-
-- `tests/run-all.sh`: deterministic hook, MCP, runtime, packaging and evaluation
-  harness regressions with local processes and fixtures.
-- `tests/examples/check.sh`: extracted Java examples plus real local Pact and
-  Gatling execution. Results describe those fixtures.
-- `evals/`: model behavior cases, including fixture context and criterion-level
-  judgments. Freeze a response before comparing judges; preserve failures and
-  distinguish model disagreement from an executable defect.
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for commands and
-[evals/README.md](../evals/README.md) for evaluation provenance.
+HTTP fetches have deadlines and response limits, reject redirects and do not
+forward credentials or resolve external references. Health routes are configurable;
+FastAPI itself does not supply them. 401/403 and 404 are access/exposure diagnostics.

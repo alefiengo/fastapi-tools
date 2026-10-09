@@ -1,7 +1,7 @@
 ---
-description: Full load acceptance and interpretation
+description: Use measured baseline and repeated workload.
 max_turns: 10
-allowed_tools: [Read, Glob, Grep, Skill]
+allowed_tools: [Read, Glob, Grep, Skill, Agent]
 ---
 
-Design an opt-in local load test for our user API. We need a 20 arrivals/second workload, p95 below 500ms and less than 1% errors. Explain run commands, data seed, what artifacts to retain and what to do if request count is zero or k6 drops iterations.
+My FastAPI endpoints are slow. We have k6. Design an authorized local acceptance cycle with p95 < 200ms and errors < 1%; do not change pools or cache until you have baseline evidence.

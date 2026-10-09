@@ -20,23 +20,23 @@ test('plugin, marketplace and MCP package versions agree', () => {
   assert.equal(json('mcp-server/package.json').version, plugin.version);
 });
 
-test('the standalone LSP map registers a Java server with the required fields', () => {
+test('the standalone LSP map registers a Python server with the required fields', () => {
   const servers = json('.lsp.json');
   for (const server of Object.values(servers)) {
     assert.equal(typeof server.command, 'string');
     assert.ok(Object.keys(server.extensionToLanguage).length);
   }
-  assert.equal(servers.java.extensionToLanguage['.java'], 'java');
+  assert.equal(servers.python.extensionToLanguage['.py'], 'python');
 });
 
 test('all declared options reach a component and references resolve', () => {
   const options = json('.claude-plugin/plugin.json').userConfig;
-  const server = json('.mcp.json').mcpServers['spring-boot'];
+  const server = json('.mcp.json').mcpServers['fastapi'];
   const definition = JSON.stringify(server);
   for (const name of Object.keys(options)) assert.ok(definition.includes(`\${user_config.${name}}`));
   for (const match of definition.matchAll(/\$\{user_config\.(\w+)\}/g)) assert.ok(options[match[1]]);
   assert.equal(server.env.PROJECT_ROOT, '${CLAUDE_PROJECT_DIR}');
-  assert.equal(server.env.SPRING_BOOT_APP_PORT, '${user_config.app_port}');
+  assert.equal(server.env.FASTAPI_APP_PORT, '${user_config.app_port}');
 });
 
 test('registered hook launchers and their shared runtime are shipped and executable', () => {
@@ -69,12 +69,12 @@ test('skills and agents have unique matching names and reviewers cannot mutate f
 
 test('GitLab template declares stages and PostgreSQL 18 compose persists its data directory', () => {
   const fences = file => [...read(file).matchAll(/```yaml\n([\s\S]*?)\n```/g)].map(m => parse(m[1]));
-  const gitlab = fences('skills/spring-boot-ci/SKILL.md').find(doc => doc['image-build']);
+  const gitlab = fences('skills/fastapi-ci/SKILL.md').find(doc => doc['image-build']);
   assert.ok(gitlab);
   for (const [name, job] of Object.entries(gitlab)) if (job?.stage) {
     assert.ok(gitlab.stages.includes(job.stage), `${name} uses undefined stage ${job.stage}`);
   }
-  const compose = fences('skills/spring-boot-docker/SKILL.md').find(doc => doc.services);
+  const compose = fences('skills/fastapi-docker/SKILL.md').find(doc => doc.services);
   assert.ok(compose.services.db.image.startsWith('postgres:18'));
   assert.ok(compose.services.db.volumes.some(volume => volume.split(':')[1] === '/var/lib/postgresql'));
 });
@@ -91,7 +91,7 @@ test('MCP lockfile matches package metadata and declared direct dependencies', (
 
 test('registered components and shared runtime are consistent', () => {
   const agents = readdirSync(path.join(root, 'agents')).filter(f => f.endsWith('.md')).sort();
-  assert.deepEqual(agents, ['sb-api-designer.md', 'sb-architect.md', 'sb-code-reviewer.md', 'sb-docker-reviewer.md', 'sb-migration-reviewer.md', 'sb-runtime-reviewer.md', 'sb-test-writer.md']);
+  assert.deepEqual(agents, ['fastapi-api-designer.md', 'fastapi-architect.md', 'fastapi-code-reviewer.md', 'fastapi-docker-reviewer.md', 'fastapi-migration-reviewer.md', 'fastapi-runtime-reviewer.md', 'fastapi-test-writer.md']);
   assert.equal(readdirSync(path.join(root, 'skills')).length, 15);
   assert.ok(!json('.claude-plugin/plugin.json').experimental?.monitors);
   const hooks = json('hooks/hooks.json').hooks;
@@ -99,10 +99,10 @@ test('registered components and shared runtime are consistent', () => {
   assert.ok(existsSync(path.join(root, 'runtime/project_runtime.py')));
   assert.match(read('hooks/scripts/hook-runtime.py'), /project_runtime/);
   assert.match(read('mcp-server/index.js'), /project_runtime/);
-  const review = read('skills/sb-pr-review/SKILL.md');
-  for (const [name] of review.matchAll(/\bsb-[a-z-]+\b/g)) {
+  const review = read('skills/fastapi-pr-review/SKILL.md');
+  for (const [name] of review.matchAll(/\bfastapi-[a-z-]+\b/g)) {
     assert.ok(existsSync(path.join(root, `agents/${name}.md`)) || existsSync(path.join(root, `skills/${name}/SKILL.md`)), `Unknown review component: ${name}`);
   }
-  assert.match(review, /documentation-only/);
-  assert.match(review, /executed\/reused/);
+  assert.match(review, /Prose-only/);
+  assert.match(review, /verification status/);
 });

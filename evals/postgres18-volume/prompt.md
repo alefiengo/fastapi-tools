@@ -1,7 +1,7 @@
 ---
-description: PostgreSQL 18 persistent volume
+description: Persist the selected PostgreSQL version correctly.
 max_turns: 10
-allowed_tools: [Read, Glob, Grep, Skill]
+allowed_tools: [Read, Glob, Grep, Skill, Agent]
 ---
 
-Use the Spring Boot Docker guidance to write only the PostgreSQL service and named volume section of compose for postgres:18-alpine. This is a new installation. The database must persist after removing and recreating the container. Explain the chosen mount path.
+Write Docker Compose for FastAPI and PostgreSQL 18 with durable data. Explain the volume mount and migration startup strategy.

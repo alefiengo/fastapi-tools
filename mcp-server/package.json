@@ -1,8 +1,8 @@
 {
-  "name": "mcp-spring-boot",
+  "name": "mcp-fastapi",
   "version": "0.1.0",
   "private": true,
-  "description": "Six Spring-aware MCP tools with shared project discovery and coordinated Maven/Gradle builds",
+  "description": "Six FastAPI MCP tools sharing Python discovery, verification locks and fresh pytest reports",
   "type": "module",
   "dependencies": {
     "@modelcontextprotocol/server": "^2.1.1",

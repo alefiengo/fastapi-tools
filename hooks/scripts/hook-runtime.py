@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Shared hook runtime. Python 3 standard library only; never executes input as shell."""
+import ast
 import json
 import os
 from pathlib import Path
@@ -32,7 +33,7 @@ def read_input():
             raise ValueError('expected an object')
         return value
     except (ValueError, TypeError) as error:
-        notice(f'Spring Boot hook skipped: invalid JSON input ({error}).')
+        notice(f'FastAPI hook skipped: invalid JSON input ({error}).')
         return None
 
 
@@ -68,7 +69,7 @@ def unquote(value):
 
 
 def config_path(path):
-    return bool(re.fullmatch(r'application[^/]*\.(?:yml|yaml|properties)', path.name))
+    return path.suffix in ('.toml', '.yaml', '.yml', '.ini', '.cfg', '.json') or (path.suffix == '.py' and re.search(r'(?:config|settings)', path.stem))
 
 
 def flow_scalar(value):
@@ -109,14 +110,25 @@ def safe_placeholder(value):
     return default is None or default.lower() in ('', 'changeme', 'change_me', 'example', 'dummy') or safe_placeholder(default)
 
 
+def embedded_credential(value):
+    match = re.search(r'(?i)(?:postgres(?:ql)?(?:\+\w+)?|mysql(?:\+\w+)?)://[^:@/]+:([^@/]+)@', value)
+    return bool(match and not safe_placeholder(match.group(1)) and match.group(1).lower() not in ('dummy', 'example', 'changeme'))
+
+
 def secrets(data, path):
     if not (config_path(path) or path.name.startswith('.env') or path.name.endswith('.env')):
+        return
+    if path.suffix == '.py':
+        python_secrets(data, path)
         return
     # Match each scalar independently: a placeholder elsewhere never exempts a literal.
     pattern = re.compile(r"(?i)(?:^|[\s:{,])[\"']?([\w.-]*(?:password|passwd|secret|api[_-]?key|token|private[_-]?key)[\w.-]*)[\"']?\s*[:=]\s*")
     for line in proposed(data, path).splitlines():
         if line.lstrip().startswith(('#', '!')):
             continue
+        if embedded_credential(line):
+            emit('PreToolUse', f'Possible hard-coded database URL credential in {path}. Read the password from the environment.')
+            return
         flow = path.suffix in ('.yaml', '.yml') and bool(re.search(r'(?:^|:)\s*\{', line))
         for match in pattern.finditer(line):
             depth = 0
@@ -143,56 +155,42 @@ def secrets(data, path):
             return
 
 
-def scalar_assignments(text):
-    """Conservative dotted paths for properties and ordinary YAML mappings.
-
-    We exempt a development document only when its activation path can be read
-    unambiguously. Unsupported YAML constructs keep the guard enabled.
-    """
-    parents = []
-    for line in text.splitlines():
-        if not line.strip() or line.lstrip().startswith(('#', '!')):
+def python_secrets(data, path):
+    try:
+        tree = ast.parse(proposed(data, path))
+    except SyntaxError:
+        return
+    sensitive = re.compile(r'(?i)(?:password|passwd|secret|api_?key|token|private_?key)$')
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
-        match = re.match(r"^(\s*)([\w.\-]+|[\"'][\w.\-]+[\"'])\s*[:=]\s*(.*?)\s*$", line)
-        if not match:
-            continue
-        indent, key, value = match.groups()
-        depth = len(indent.expandtabs(8))
-        while parents and parents[-1][0] >= depth:
-            parents.pop()
-        key = unquote(key)
-        full = '.'.join([item[1] for item in parents] + [key])
-        if value and not value.startswith('{'):
-            yield full, unquote(value)
-        elif not value:
-            parents.append((depth, key))
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            value = node.value
+            # Environment lookups are safe unless their fallback embeds a secret.
+            if isinstance(value, ast.Call) and ast.unparse(value.func) in ('os.getenv', 'os.environ.get', 'getenv'):
+                value = value.args[1] if len(value.args) > 1 else next((kw.value for kw in value.keywords if kw.arg == 'default'), None)
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                secret = value.value
+                url_secret = embedded_credential(secret)
+                if (sensitive.search(target.id) and secret and secret.lower() not in ('changeme', 'change_me', 'dummy', 'example') and not re.fullmatch(r'<[^<>]+>', secret)) or url_secret:
+                    emit('PreToolUse', f'Possible hard-coded credential ({target.id}) in {path}. Read secrets from environment variables or a secret store.')
+                    return
 
 
 def ddl(data, path):
-    if not config_path(path):
+    if path.suffix != '.py' or 'tests' in path.parts or re.search(r'(?:^|_)(?:dev|local)(?:_|$)', path.stem):
         return
-    text = proposed(data, path)
-    if re.fullmatch(r'application-(?:dev|local)\.(?:yml|yaml|properties)', path.name):
+    try:
+        tree = ast.parse(proposed(data, path))
+    except SyntaxError:
         return
-    # YAML and Spring properties support profile-scoped multi-document config.
-    # An unrelated on-profile field, active=dev, !prod or dev|prod never exempts it.
-    for document in re.split(r'(?m)^\s*(?:---|#---|!---)\s*$', text):
-        activation = [value for key, value in scalar_assignments(document) if key == 'spring.config.activate.on-profile']
-        if len(activation) == 1 and activation[0] in ('dev', 'local'):
-            continue
-        for line in document.splitlines():
-            if line.lstrip().startswith(('#', '!')):
-                continue
-            for match in re.finditer(r"(?i)\bddl-auto[\"']?\s*[:=]\s*", line):
-                raw = line[match.end():]
-                flow = path.suffix in ('.yaml', '.yml') and bool(re.search(r'(?:^|:)\s*\{', line))
-                value = unquote(flow_scalar(raw) if flow else raw)
-                default = re.fullmatch(r'\$\{[^{}:]+:([^{}]*)\}', value)
-                effective = default.group(1) if default else value
-                unsafe = re.match(r"(?i)[\"']?(create-drop|create|update)[\"']?(?=$|[\s,}])", effective)
-                if unsafe:
-                    emit('PreToolUse', f'Unsafe ddl-auto={unsafe.group(1)} in {path}. Use migrations and ddl-auto=none or validate; development DDL requires a dev/local profile file or a document activated only for dev/local.')
-                    return
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and ((isinstance(node.func, ast.Attribute) and node.func.attr == 'drop_all') or any(isinstance(arg, ast.Attribute) and arg.attr == 'drop_all' for arg in node.args)):
+            emit('PreToolUse', f'Destructive metadata.drop_all() in {path}. Use a reviewed Alembic migration; isolate development resets in a dev/local helper or test fixture.')
+            return
 
 
 def build(event, data, path):
@@ -202,6 +200,8 @@ def build(event, data, path):
     try:
         info = discover(location)
     except ValueError:
+        return
+    if not info.get('isFastAPI'):
         return
     if event == 'PostToolUse':
         # Batch edits: record pending work, never launch a build for each keystroke.
@@ -223,21 +223,19 @@ def build(event, data, path):
 
 
 def lint(data, path):
-    if path.suffix != '.sql' or not any(path.parts[i:i+2] == ('db', 'migration') for i in range(len(path.parts)-1)) or not path.is_file():
+    if path.suffix != '.py' or 'versions' not in path.parts or not path.is_file():
         return
-    messages = []
-    # Flyway supports dotted/underscored versions, repeatable scripts and undo scripts.
-    if not re.fullmatch(r'(?:[VU]\d+(?:[._]\d+)*|R)__[^/]+\.sql', path.name):
-        messages.append('naming: expected V<version>__<description>.sql, U<version>__<description>.sql or R__<description>.sql')
-    text = path.read_text()
-    sql = re.sub(r'/\*.*?\*/|--[^\n]*', '', text, flags=re.S)
-    if re.search(r'\bBEGIN\b', sql, re.I) and re.search(r'\bCOMMIT\b', sql, re.I) and re.search(r'\bFOR\b[^;]*\bLOOP\b', sql, re.I):
-        messages.append('BEGIN/COMMIT with LOOP: verify transaction handling is intentional')
-    if re.search(r'\b(?:DROP\s+(?:TABLE|COLUMN)|TRUNCATE\s+(?:TABLE\s+)?|DELETE\s+FROM)\b', sql, re.I):
-        messages.append('Destructive SQL: IF EXISTS does not protect data. Review backups, dependencies and rollback before applying. Never edit an already applied migration; add a new migration.')
+    from project_runtime import migration_inventory
+    try:
+        info = discover(path)
+    except ValueError:
+        return
+    inventory = migration_inventory(Path(info['root']))
+    relative = path.resolve().relative_to(Path(info['root'])).as_posix()
+    messages = [item['message'] for item in inventory['errors'] + inventory['risks'] if item.get('file') in (None, relative)]
+    messages += inventory['warnings']
     if messages:
-        emit('PostToolUse', f'{path.name}: ' + '\n'.join(messages))
-
+        emit('PostToolUse', path.name + ': ' + '\n'.join(messages) + '\nNever edit an applied revision; add a new migration.')
 
 
 def main():
@@ -266,4 +264,4 @@ if __name__ == '__main__':
     try:
         main()
     except (OSError, TypeError, ValueError, AttributeError) as error:
-        notice(f'Spring Boot hook skipped: {error}')
+        notice(f'FastAPI hook skipped: {error}')

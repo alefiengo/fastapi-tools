@@ -1,5 +1,5 @@
 name: Feature proposal
-description: Suggest an improvement to Spring Boot development workflows.
+description: Suggest an improvement to FastAPI development workflows.
 title: "[Feature]: "
 body:
   - type: textarea

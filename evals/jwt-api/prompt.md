@@ -1,7 +1,7 @@
 ---
-description: Spring Security JWT encoder API and refresh-cookie CSRF
+description: Validate JWT and ownership in FastAPI.
 max_turns: 10
-allowed_tools: [Read, Glob, Grep, Skill]
+allowed_tools: [Read, Glob, Grep, Skill, Agent]
 ---
 
-For Spring Security 7, show a method that returns a compact access-token String using an injected JwtEncoder, with subject and expiry claims. My refresh endpoint authenticates using a browser cookie. Explain how to protect that endpoint against CSRF; do not assume stateless means immune.
+Review JWT auth for FastAPI: code decodes tokens with verify_signature=False and accepts owner_id from the request payload to approve an order. Show required fixes and tests.

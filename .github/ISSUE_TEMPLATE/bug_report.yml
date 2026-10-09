@@ -9,7 +9,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Plugin version, Claude Code version, OS, and relevant Node/Python/JDK/build-tool versions.
+      description: Plugin version, Claude Code version, OS, and relevant Node/Python/package-manager versions.
     validations:
       required: true
   - type: dropdown

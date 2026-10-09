@@ -1,94 +1,62 @@
 # Contributing
 
-Keep this plugin focused on Spring Boot development. New components should
-have a distinct responsibility and work with the application's existing
-conventions and build configuration.
+Keep the plugin focused on FastAPI development and the application's existing
+conventions. Match skill/agent frontmatter names to directories/files. Reviewers
+use Read, Glob and Grep only; designers and test writers have scoped output.
 
-## Components
-
-- Skills belong in `skills/<name>/SKILL.md`. Match the directory and frontmatter
-  names, describe when the skill should activate, and write actionable English
-  instructions. Adapt examples to the target application; verify version
-  claims against primary sources.
-- Agents belong in `agents/<name>.md`. State their tools and output scope.
-  Reviewers remain read-only; design and test writers stay within their roles.
-- Hooks belong in `hooks/hooks.json` and `hooks/scripts/`. Keep pre/post-edit
-  work inexpensive. Use valid Claude hook JSON, visible dependency diagnostics
-  and functional regressions for changed behavior.
-- Project discovery, command construction, locks and verification records
-  belong in `runtime/project_runtime.py`. MCP and hooks share that runtime.
-- MCP tools belong in `mcp-server/index.js`. Validate arguments, use argument
-  arrays for execution, bound output/time and distinguish static evidence from
-  runtime inspection.
-
-Update the README catalog and registrations when adding, renaming or removing
-components. Keep plugin, marketplace, MCP package/lockfile and server versions
-aligned. Preserve dependency lockfiles and the license.
-
-## Local validation
-
-Install the MCP dependencies and run deterministic checks:
+Shared discovery, inventories and coordinated execution belong in runtime/;
+hooks remain inexpensive until Stop. MCP validates inputs, bounds outputs and
+distinguishes static evidence from executed checks. Keep plugin, marketplace,
+MCP package/lock and server versions aligned. Update catalogs when renaming tools.
 
 ```bash
 npm ci --prefix mcp-server
 node --check mcp-server/index.js
 python3 -m py_compile runtime/project_runtime.py hooks/scripts/hook-runtime.py
 bash tests/run-all.sh
-claude plugin validate .claude-plugin/plugin.json --strict
-claude plugin validate .claude-plugin/marketplace.json --strict
-claude plugin validate skills --strict
-claude plugin validate agents --strict
 git diff --check
 ```
 
-`tests/run-all.sh` runs the hook, MCP, runtime, packaging and evaluation-harness
-regressions. MCP tests use local processes and HTTP listeners. Build tests use
-controlled wrappers and fixtures rather than an application's external services.
-
-Validate Java examples separately with a compatible JDK, Maven and access to
-the configured dependency registry:
+Deterministic tests use temporary Python projects, controlled executable fixtures,
+real stdio MCP messages and local HTTP listeners. Add meaningful regressions for
+execution, scope, cache freshness, failure/cancellation and coordination changes.
+Validate the real FastAPI example separately:
 
 ```bash
+python3 -m pip install -r tests/examples/requirements.txt
 bash tests/examples/check.sh
 ```
 
-That check extracts code directly from skills, compiles it and runs smoke,
-Pact and local Gatling checks. These fixtures exercise examples and workflow;
-they do not certify a production provider, broker or performance target.
+CI runs deterministic checks on Linux/macOS and Python examples separately.
+Behavioral evaluations require a logged-in Claude account and paid model calls;
+run only when explicitly requested. Keep reports local, retain failures, and use
+one frozen response when comparing judges. See evals/README.md.
 
-The CI workflow runs deterministic tests on Linux/macOS and validates the
-examples in a Java job. It does not make behavioral model calls.
+Use Conventional Commits. PR descriptions explain resulting behavior, validation
+and material limitations. Validate the plugin in a trusted FastAPI project with
+claude --plugin-dir /absolute/path/to/this/repo when interactive checks are needed.
 
-## Behavioral evaluations
+## GitHub publication
 
-Evaluations use a logged-in Claude Code account, make paid model calls and
-may read plugin content. Run them explicitly and keep reports local:
+The intended destination is `alefiengo/fastapi-tools`. Before the first push,
+create that repository and point this checkout's origin to its URL. A copied
+checkout may still point to spring-boot-tools; inspect `git remote -v` first.
+Include new FastAPI skills, agents, evaluations and fixtures in the commit,
+along with deletions of the old framework files. Never publish node_modules,
+virtual environments, local state or evaluation reports.
 
-```bash
-claude plugin eval . --trust-plugin --case test-writer-behavior \
-  --runs 1 --ablation none --threshold 1 --no-publish
-claude plugin eval . --trust-plugin --runs 1 --ablation none \
-  --threshold 1 --no-publish
-```
+Validate a clean copy with `npm ci --prefix mcp-server`, the deterministic suites,
+example tests, strict Claude plugin validation and `npm audit --omit=dev` in
+mcp-server. After pushing, require the four deterministic matrix checks and the
+examples check to pass on GitHub before creating a release. Local checks do not
+establish Linux/macOS or Node version matrix results.
 
-Require every release criterion to pass. Compare judges against one frozen
-response, choose the canonical judge before examining results and retain
-failures alongside diagnostics. See [evals/README.md](evals/README.md) for the
-freeze/judge commands. Model behavior checks supplement executable regressions.
+Enable private vulnerability reporting before using the security contact link.
+Configure a main ruleset with required CI checks, resolved review conversations
+and an up-to-date branch according to the team's policy. Allow squash/rebase and
+automatically delete merged branches if following the analogous Spring Boot repo.
+These are GitHub settings, not properties guaranteed by files in this checkout.
 
-## Reviewing changes
-
-Explain the trigger, resulting behavior and validation evidence. Include a
-regression when correcting an executable defect. Shared runtime changes should
-cover relevant input freshness, task/module/profile scope, failure/cancellation
-or cross-process coordination. Keep generated logs and evaluation reports out
-of commits.
-
-Open a pull request from a topic branch. `main` requires all five CI checks,
-resolved review conversations and an up-to-date branch. Merge with squash or
-rebase; completed topic branches are deleted automatically.
-
-Use Conventional Commits and a title that describes the final change. Mark
-breaking public tool/configuration changes explicitly. Test the plugin from a
-Spring application with `claude --plugin-dir /absolute/path/to/this/repo` when
-interactive verification is needed.
+For a tagged release, keep the plugin/marketplace/MCP versions aligned and ensure
+the tag identifies the verified FastAPI commit. Create the GitHub release after
+that commit's checks pass; add a release badge only once a release exists.

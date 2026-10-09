@@ -1,9 +1,12 @@
 {
-  "java": {
-    "command": "jdtls",
-    "args": [],
+  "python": {
+    "command": "pyright-langserver",
+    "args": [
+      "--stdio"
+    ],
     "extensionToLanguage": {
-      ".java": "java"
+      ".py": "python",
+      ".pyi": "python"
     },
     "restartOnCrash": true
   }

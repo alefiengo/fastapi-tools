@@ -1,25 +1,25 @@
 {
-  "name": "spring-boot-tools-marketplace",
-  "description": "Spring Boot productivity tools for Claude Code: skills, subagents, hooks, and an MCP server.",
+  "name": "fastapi-tools-marketplace",
+  "description": "FastAPI productivity tools for Claude Code",
   "owner": {
     "name": "alefiengo"
   },
   "plugins": [
     {
-      "name": "spring-boot-tools",
+      "name": "fastapi-tools",
       "source": "./",
-      "description": "Spring Boot toolkit: 15 skills, 7 agents, 5 coordinated hooks, 6 MCP tools, optional Java LSP, and executable regression checks.",
+      "description": "FastAPI toolkit: 15 skills, seven specialist agents, five hooks and six MCP tools with shared Python verification.",
       "version": "0.1.0",
       "author": {
         "name": "alefiengo"
       },
       "keywords": [
-        "spring-boot",
-        "java",
-        "maven",
-        "gradle",
-        "flyway",
-        "testing"
+        "fastapi",
+        "python",
+        "pydantic",
+        "sqlalchemy",
+        "alembic",
+        "pytest"
       ]
     }
   ]

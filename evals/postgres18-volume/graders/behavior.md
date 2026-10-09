@@ -2,4 +2,4 @@
 type: llm
 ---
 
-PASS only if postgres:18-alpine is used, the named volume is mounted at /var/lib/postgresql, and the answer explains the PostgreSQL 18 data directory change. FAIL if it mounts the named volume solely at /var/lib/postgresql/data without explicitly setting a compatible PGDATA.
+Uses /var/lib/postgresql for PostgreSQL 18, binds Uvicorn appropriately and runs Alembic as a controlled release task rather than racing every worker.
