@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0] - 2026-11-01
+
+- Add the Codex manifest and local adapter sharing skills, MCP and the Python runtime.
+- Add offline installation diagnosis, protocol/installation smoke tests and host capability documentation.
+- Publish the complete component evidence inventory, compatibility limits and reproducible validation report.
+
 ## [0.2.0] - 2026-11-01
 
 - Explicit local project initialization with protected ancestors, private staging and exclusive publication.
@@ -15,3 +21,4 @@
 
 [0.1.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.1.0
 [0.2.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.2.0
+[0.3.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.3.0

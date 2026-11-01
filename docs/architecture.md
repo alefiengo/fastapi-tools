@@ -78,9 +78,16 @@ network calls, installers, application imports, Git commands or server starts.
 Staging is the only temporary write outside the requested destination. A process
 with adversarial parent-directory write access remains outside the trust boundary.
 
-## Component choices
+## Host adapters and component choices
 
-Hooks and MCP use the same Python discovery and execution implementation.
+Codex uses its own manifest and MCP registration, sharing skills and the same
+server/runtime. The per-process wrapper supplies the bundle root; the MCP launcher
+selects its actual workspace cwd. It does not duplicate project discovery.
+Claude agents, hooks, LSP and userConfig are not translated. Explicit empty Codex
+hooks suppress accidental Claude hook discovery. See codex.md and capability-matrix.md.
+The offline doctor resolves dependencies and checks registration without starting
+hosts/MCP, importing application code, installing packages or contacting services.
+
 The inexpensive post-edit hook remains compatible: it records a pending hint,
 while Stop independently fingerprints final inputs. The hint is advisory and is
 never proof of success. The redundant in-process MCP active-test set was removed: every request now

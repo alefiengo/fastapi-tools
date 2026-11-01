@@ -18,6 +18,7 @@ test('plugin, marketplace and MCP package versions agree', () => {
   assert.equal(entry.version, plugin.version);
   assert.match(plugin.version, /^\d+\.\d+\.\d+$/);
   assert.equal(json('mcp-server/package.json').version, plugin.version);
+  assert.equal(json('.codex-plugin/plugin.json').version, plugin.version);
   assert.equal(json('mcp-server/package-lock.json').packages[''].version, plugin.version);
   assert.equal(read('mcp-server/index.js').match(/name: "mcp-fastapi", version: "([^"]+)"/)[1], plugin.version);
 });

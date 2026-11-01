@@ -1,6 +1,6 @@
 # Maintaining fastapi-tools
 
-This repository distributes a FastAPI development plugin for Claude Code.
+This repository distributes a FastAPI development plugin for Claude Code and Codex.
 Read CONTRIBUTING.md and docs/architecture.md before changing executable behavior.
 The agents/ and skills/ directories contain shipped product components, not the
 maintenance team. Use docs/skills/repo-director/SKILL.md for requested coordination.

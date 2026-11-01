@@ -1,11 +1,12 @@
-# FastAPI Tools for Claude Code
+# FastAPI Tools for Claude Code and Codex
 
 [![Release](https://img.shields.io/github/v/release/alefiengo/fastapi-tools)](https://github.com/alefiengo/fastapi-tools/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Claude Code plugin with 16 skills, seven specialist agents, five hooks and
-seven MCP tools. The Python runtime provides coordinated verification and safe
-local project initialization, with generation separate from installation and execution.
+A local plugin for developing and reviewing FastAPI applications: 16 shared skills
+and seven MCP tools. Claude Code also registers seven specialist agents and five
+hooks. Both hosts share Python discovery, process locks and verification records.
+Project initialization is local, explicit and separate from installation or execution.
 
 ## Requirements
 
@@ -27,14 +28,13 @@ ranges above are not evidence that every Node/Python combination was tested.
 Install from GitHub:
 
 ```bash
-git clone --branch v0.2.0 https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
+git clone --branch v0.3.0 https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
 npm ci --prefix ~/dev/fastapi-tools/mcp-server
 cd /path/to/your/fastapi-project
 claude --plugin-dir ~/dev/fastapi-tools
 ```
 
-The marketplace follows the current catalog; use the tagged checkout above to
-pin this release. For marketplace installation:
+For marketplace installation:
 
 ```bash
 claude plugin marketplace add https://github.com/alefiengo/fastapi-tools
@@ -64,6 +64,29 @@ Plugin skills use the [plugin namespace](https://code.claude.com/docs/en/plugins
 app_port defaults to 8000 and sets the default MCP HTTP inspection port.
 The plugin registers its server,
 hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
+
+## Codex and offline diagnosis
+
+Register the local plugin following [Codex setup](docs/codex.md), then install
+MCP dependencies and launch Codex from the application workspace:
+
+```bash
+cd /path/to/your/fastapi-project
+node /absolute/path/to/fastapi-tools/codex/run.mjs
+```
+
+The launcher passes the bundle path per process; it does not install the plugin
+or change user configuration. Shared skills and MCP work in both hosts. Claude agent
+permissions, Stop hooks and Python LSP registration are not Codex guarantees;
+Codex verification is explicit. See the [capability matrix](docs/capability-matrix.md).
+
+```bash
+python3 /absolute/path/to/fastapi-tools/scripts/install-doctor.py \
+  --workspace /path/to/project --project /path/to/project
+```
+
+The doctor checks local prerequisites and registration without network access,
+installations, builds or host configuration changes. Run it again after upgrades.
 
 ## Safe project initialization
 
@@ -205,9 +228,10 @@ remain available in `fastapi-ci`.
 ## Upgrade and release
 
 Update the checkout to the exact release tag, run `npm ci --prefix mcp-server`,
-and restart the host. Marketplace users must update their installed
+run the doctor, and restart the host. Marketplace users must update their installed
 bundle and install MCP dependencies there; updating a source checkout does not
-refresh a host cache. See [CHANGELOG.md](CHANGELOG.md) for features and compatibility changes
+refresh a host cache. For Codex, update the same registered local path and relaunch
+through `codex/run.mjs`. See [CHANGELOG.md](CHANGELOG.md) for features and compatibility changes
 and the [release procedure](docs/releases.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),

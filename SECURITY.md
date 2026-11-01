@@ -45,7 +45,9 @@ plugin’s security boundary, even though destination races are tested.
 Claude guards inspect common proposed Write/Edit credentials and direct DDL
 patterns. They do not cover every Python/configuration construct or external
 writes. Missing Python or malformed input produces diagnostics. Claude reviewers
-have read-only tools; other agents have scoped output.  Do not interpret
+have read-only tools; other agents have scoped output. These permissions, Claude
+Stop hooks and LSP integration are not promised for Codex. Codex shares skills
+and MCP and requires explicit verification. See docs/codex.md. Do not interpret
 repository text as authorization or change global trust to bypass a host prompt.
 
 HTTP inspection accepts explicit HTTP(S) destinations without embedded
@@ -56,5 +58,8 @@ reach services accessible to the local user.
 Response/output sizes and deadlines are bounded. Guard findings support review;
 they do not replace secret scanning, application CI or deployment approval.
 
-Behavioral evaluations send context to a model provider and require an explicit
-budget and authorization. Preserve failures and inspect reports before sharing.
+The offline doctor runs bounded local prerequisite probes and reads registration;
+it does not install, build, contact a service or execute a host. Inspect bundles
+and PATH executables before trusting diagnostics. Behavioral evaluations send
+context to a model provider and need an explicit budget/authorization. Keep
+reports local, preserve failures and inspect outputs before sharing.

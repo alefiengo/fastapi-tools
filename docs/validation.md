@@ -1,4 +1,4 @@
-# Validation for FastAPI Tools 0.2.0
+# Validation for FastAPI Tools 0.3.0
 
 Release validation is performed on the snapshot identified by its annotated tag.
 The attached GitHub release report records the exact commit, executed commands,
@@ -21,11 +21,13 @@ public-directory icon warning does not invalidate local strict validation.
 
 ## Executed checks
 
-- 10 deterministic suites passed.
+- 12 deterministic suites passed.
 - Ten executable FastAPI/Pydantic/SQLAlchemy/Alembic examples passed.
 - Four real ecosystem scenarios passed: generated project, Python/venv, uv and Poetry.
 - Node/Python syntax checks and strict Claude plugin/skills/agents validation passed.
 - Production npm audit reported zero vulnerabilities for the locked dependencies.
+- Codex CLI 0.166.0 read 16 skills, zero hooks and seven tools, and called the MCP.
+- Local Codex installation/listing passed with disposable CODEX_HOME state.
 
 Environment: Linux x86_64, Node 24.21.0, runtime Python 3.12.10, fixture Python
 3.12.14, uv 0.13.0, Poetry 2.5.1, FastAPI 0.162.0, Pydantic 2.14.2, pytest

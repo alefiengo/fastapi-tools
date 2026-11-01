@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "fastapi": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const root = process.env.FASTAPI_TOOLS_PLUGIN_ROOT; if (!root || !require('node:path').isAbsolute(root)) { console.error('Launch Codex with node /absolute/plugin/path/codex/run.mjs (FASTAPI_TOOLS_PLUGIN_ROOT is required).'); process.exit(1); } import(require('node:url').pathToFileURL(require('node:path').join(root, 'codex', 'launch.mjs')).href).catch(error => { console.error(error.message); process.exitCode = 1; });"
+      ],
+      "env_vars": ["FASTAPI_TOOLS_PLUGIN_ROOT", "FASTAPI_APP_PORT"]
+    }
+  }
+}

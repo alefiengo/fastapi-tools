@@ -1,0 +1,15 @@
+{
+  "name": "fastapi-tools",
+  "version": "0.3.0",
+  "description": "FastAPI skills and shared-runtime MCP tools for local Codex workspaces. Verification is explicit; Claude hooks and agents are not registered.",
+  "skills": "./skills/",
+  "mcpServers": "./codex/mcp.json",
+  "hooks": {
+    "hooks": {}
+  },
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "FastAPI Tools",
+    "shortDescription": "FastAPI skills and local tools"
+  }
+}

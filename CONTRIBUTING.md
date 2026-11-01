@@ -45,6 +45,10 @@ ECOSYSTEM_PYTHON="$PWD/.fastapi-tools/validation-env/bin/python" bash tests/pyth
 
 The fixture preparation may download dependencies; checks never install them.
 
+Run `python3 scripts/install-doctor.py --workspace /path/to/application --project /path/to/application`
+and the optional Codex protocol/installation smokes described in docs/codex.md.
+They use temporary host state and make no model calls.
+
 Behavioral evaluations require a separate explicit budget and authorization.
 Functional fixtures do not establish measured skill or agent benefit. Record the
 actual platform, versions and limitations; do not claim an unrun compatibility matrix.

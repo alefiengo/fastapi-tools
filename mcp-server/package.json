@@ -1,6 +1,6 @@
 {
   "name": "mcp-fastapi",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Seven FastAPI MCP tools sharing safe initialization, Python discovery, verification locks and pytest reports",
   "type": "module",

@@ -8,8 +8,8 @@
     {
       "name": "fastapi-tools",
       "source": "./",
-      "description": "FastAPI toolkit for Claude Code: safe initialization, 16 skills and seven MCP tools",
-      "version": "0.2.0",
+      "description": "FastAPI skills, specialist agents, safe initialization and shared-runtime MCP tools",
+      "version": "0.3.0",
       "author": {
         "name": "alefiengo"
       },
