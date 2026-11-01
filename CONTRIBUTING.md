@@ -3,6 +3,9 @@
 This repository distributes a plugin, not a FastAPI application. Read AGENTS.md
 and docs/architecture.md first. Maintenance coordination is documented separately
 in docs/skills/repo-director/SKILL.md; shipped skills/ and agents/ are product.
+FastAPI Tools is maintained and released independently of Spring Boot Tools.
+Development and validation use this repository and its prerequisites; another
+repository is not a required reference or dependency.
 Keep FastAPI/Python conventions and applications’ existing tool choices. Read
 official tool documentation before changing behavior; record sources and limits.
 Reviewers use Read, Glob and Grep only; designers and test writers have scoped output.
@@ -64,7 +67,7 @@ responses with the same judge when authorized evaluations are run.
 Use Conventional Commits, following repository history. PR descriptions explain
 the resulting behavior, validation and material limits. Preserve unrelated work.
 Inspect git status, remotes and GitHub settings before publication. The intended
-repository is alefiengo/fastapi-tools; the sibling reference is read-only.
+repository is alefiengo/fastapi-tools. Leave other repositories unchanged.
 
 GitHub Actions and automatic Dependabot updates are disabled in this repository.
 No Actions badge, workflow or required Actions status check belongs here. Keep

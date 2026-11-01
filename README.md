@@ -236,20 +236,16 @@ verification no longer requires undeclared pytest. See [CHANGELOG.md](CHANGELOG.
 and the [release procedure](docs/releases.md).
 
 The published tags are v0.1.0 (2026-10-08) and v0.3.0 (2026-10-31, America/La_Paz).
-There was no v0.2.0 tag or release. During the parity work, 0.3.0 was selected to
-match the reference repository's version number; that choice did not require an
-intermediate release and does not establish equivalent capabilities. Future
-FastAPI Tools versions follow this repository's changes independently.
+There was no v0.2.0 tag or release. See [CHANGELOG.md](CHANGELOG.md) for that
+numbering decision. FastAPI Tools versions follow this repository's changes.
 
-## Origin
+## Independent project
 
-This repository started from [Spring Boot Tools](https://github.com/alefiengo/spring-boot-tools)
-and retains its initial Git history. Commit
-[2887440](https://github.com/alefiengo/fastapi-tools/commit/2887440a9ecfe211142d28a4ab28ba70ddd13908)
-adapted the plugin to FastAPI/Python on 2026-10-08. The later 0.3.0 work used
-Spring Boot Tools v0.3.0 as a read-only design reference and added FastAPI-specific
-implementation and validation here. This attribution describes provenance;
-capability and compatibility claims are bounded by this repository's evidence.
+FastAPI Tools and Spring Boot Tools are independent projects. FastAPI Tools has
+its own implementation, dependencies, maintenance, roadmap, versions and releases.
+Installing, running, testing and maintaining this plugin requires only this
+repository and its documented prerequisites. Historical shared commits and a
+one-time maintenance comparison do not couple the two projects.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
 [behavioral evaluations](evals/README.md) and [SECURITY.md](SECURITY.md).

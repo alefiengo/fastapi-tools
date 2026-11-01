@@ -1,6 +1,9 @@
 # Maintaining fastapi-tools
 
 This repository distributes a FastAPI development plugin for Claude Code and Codex.
+fastapi-tools and spring-boot-tools are independent projects. Choose versions,
+dependencies, roadmap and releases from this repository's own needs and evidence.
+Development and validation must not require the other repository.
 Read CONTRIBUTING.md and docs/architecture.md before changing executable behavior.
 The agents/ and skills/ directories contain shipped product components, not the
 maintenance team. Use docs/skills/repo-director/SKILL.md for requested coordination.
@@ -11,5 +14,5 @@ application modules during static analysis or install dependencies during checks
 Validate executable changes with meaningful regressions and applicable checks.
 Behavioral model evaluations require an explicit budget and authorization.
 Publication and external changes require user authorization; follow existing
-session authorization without repeated permission requests. Do not modify the
-read-only spring-boot-tools reference or global configuration.
+session authorization without repeated permission requests. Do not modify
+other repositories or global configuration.

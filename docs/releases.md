@@ -5,10 +5,10 @@ Actions and automatic Dependabot updates are disabled; retain security alerts,
 secret scanning and all other PR/history/delete/force-push protections. Do not
 claim a hosted CI matrix when only local evidence exists.
 
-Choose versions from FastAPI Tools changes independently of the reference
-repository. The published 0.1.0 to 0.3.0 jump matched the reference's number during
-the parity work; it did not represent an intervening 0.2.0 release or prove equal
-capabilities. Record any numbering exception explicitly in CHANGELOG.md.
+Choose versions exclusively from FastAPI Tools changes. This project has its own
+release lifecycle; do not align versions or release decisions with another project.
+The historical 0.1.0 to 0.3.0 jump is explained in CHANGELOG.md and establishes no
+cross-project relationship. Record numbering exceptions explicitly.
 
 1. Select a semantic version and align Claude manifest, marketplace entry, Codex
    manifest, MCP package, both lockfile root versions, MCP initialization literal

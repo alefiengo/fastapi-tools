@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- State project independence explicitly: FastAPI Tools has its own dependencies,
+  roadmap, maintenance, versioning and releases; Spring Boot Tools is not required.
 - Correct root documentation: measured platform coverage, namespaced Claude review
   command, fingerprint exclusions, agent instruction boundaries, interrupted staging
   cleanup, isolated example preparation, project provenance and version history.
@@ -10,9 +12,10 @@
 
 ## [0.3.0] - 2026-10-31
 
-This version number was selected to match the Spring Boot reference during the
-parity work. The preceding FastAPI tag was v0.1.0; no v0.2.0 was created.
-Matching version numbers do not establish equivalent capabilities or validation.
+During release preparation, this number was selected to match an external Spring
+Boot comparison reference. That was an unnecessary numbering choice for this
+independent project. The preceding FastAPI tag was v0.1.0; no v0.2.0 was created.
+Versions, capabilities and validation belong to FastAPI Tools independently.
 
 - Add explicit local FastAPI initialization with protected ancestors, staging and
   exclusive publication; keep generation separate from dependency installation.
