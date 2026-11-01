@@ -81,10 +81,11 @@ iniciado: iniciar una sesión nueva para otra aplicación. Mantener alineadas la
 versión del plugin instalado y la del wrapper; este carga el MCP de su checkout.
 
 El handoff explícito de ruta evita depender de expansión de `${PLUGIN_ROOT}`
-en el loader de compatibilidad. Ese límite se observó en la referencia de solo
-lectura spring-boot-tools v0.3.0 con Codex 0.166.0; no se volvió a instalar este
-plugin para probar interpolación aquí. No se afirma compatibilidad de un inicio
-bare `codex` sin la variable ni de un inicio desktop sin este entorno.
+en el loader de compatibilidad. Las pruebas propias de este repositorio validan
+el wrapper y su configuración con Codex 0.166.0; no prueban la interpolación
+automática de esa variable. No se afirma compatibilidad de un inicio bare `codex`
+sin la variable ni de un inicio desktop sin este entorno. Este adaptador no
+requiere archivos, instalación ni configuración de Spring Boot Tools.
 
 ## Doctor offline
 
