@@ -79,6 +79,12 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(discover(child)['root'], str(child))
         self.assertTrue(discover(child)['isFastAPI'])
 
+    def test_ambiguous_managers_are_refused(self):
+        (self.root/'uv.lock').write_text('version = 1\n')
+        (self.root/'poetry.lock').write_text('')
+        with self.assertRaisesRegex(ValueError, 'Ambiguous Python managers'):
+            discover(self.root)
+
     def test_declared_uv_and_poetry_runner(self):
         from unittest.mock import patch
         (self.root/'uv.lock').write_text('version = 1')
@@ -170,7 +176,8 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('Unsafe test report',self.invoke(task='test')['error'])
         (self.state/'pytest.xml').unlink()
         (self.root/'external.py').symlink_to(ROOT/'runtime/project_runtime.py')
-        result=self.invoke(); self.assertTrue(result['ok']); self.assertFalse(result['cacheable'])
+        result=self.invoke(task='compile'); self.assertTrue(result['ok']); self.assertFalse(result['cacheable'])
+        verification=self.invoke(); self.assertFalse(verification['ok']); self.assertTrue(verification['verificationIncomplete'])
         self.assertFalse(self.invoke()['reused'])
 
     def test_routes_resolve_imports_and_nested_prefixes_without_importing(self):
@@ -223,5 +230,116 @@ class RuntimeTests(unittest.TestCase):
         directory=self.root/'db/migrations/versions';directory.mkdir(parents=True)
         (directory/'x.py').write_text('revision="x"\ndown_revision=None\ndef upgrade(): pass\n')
         self.assertEqual(migration_inventory(self.root)['heads'],['x'])
+
+    def test_verify_does_not_impose_undeclared_tools_or_test_runner(self):
+        (self.root/'pyproject.toml').write_text('[project]\nname="demo"\ndependencies=["fastapi", "pytest-cov", "ruff-lsp", "mypy-extensions"]\n')
+        self.assertEqual(discover(self.root)['checks'], [])
+        result=self.invoke(); self.assertTrue(result['ok'], result)
+        self.assertEqual(len(self.calls()), 1)
+        self.assertIn('--syntax', self.calls()[0])
+        for task in ('lint', 'typecheck', 'test'):
+            self.assertIn('not declared or configured', self.invoke(task=task)['error'])
+
+    def test_external_tool_configuration_and_static_setup_cfg_declarations(self):
+        (self.root/'pyproject.toml').unlink()
+        (self.root/'setup.cfg').write_text('[metadata]\nname=cfg-app\n[options]\ninstall_requires=\n    fastapi>=0.100\n[options.extras_require]\ntest=\n    pytest>=7\n[mypy]\nignore_missing_imports=true\n')
+        (self.root/'.ruff.toml').write_text('line-length=100\n')
+        info=discover(self.root)
+        self.assertEqual(info['name'], 'cfg-app')
+        self.assertTrue(info['isFastAPI'])
+        self.assertEqual(info['checks'], ['mypy','pytest','ruff'])
+        self.assertTrue(self.invoke()['ok'])
+        (self.root/'setup.cfg').write_text('[metadata]\nname=cfg-app\n')
+        (self.root/'.ruff.toml').unlink()
+        (self.root/'tox.ini').write_text('[other]\nvalue=1\n')
+        self.assertEqual(discover(self.root)['checks'], [])
+        (self.root/'tox.ini').write_text('[pytest]\ntestpaths=tests\n')
+        self.assertEqual(discover(self.root)['checks'], ['pytest'])
+
+    def test_static_metadata_rejects_symlinks_and_fifos_without_reading_external_data(self):
+        outside=self.root/'outside.toml'; outside.write_text('[project]\nname="external"\n')
+        config=self.root/'pyproject.toml'; config.unlink(); config.symlink_to(outside)
+        result=self.invoke(); self.assertFalse(result['ok']); self.assertIn('error', result)
+        config.unlink(); os.mkfifo(config)
+        start=time.monotonic(); result=self.invoke()
+        self.assertFalse(result['ok']); self.assertLess(time.monotonic()-start, 2)
+
+    def test_report_hardlinks_are_rejected_before_execution(self):
+        outside=self.root/'keep.xml'; outside.write_text('unchanged')
+        os.link(outside, self.state/'pytest.xml')
+        result=self.invoke(task='test'); self.assertIn('Unsafe test report', result['error'])
+        self.assertEqual(outside.read_text(), 'unchanged')
+        self.assertFalse((self.state/'calls').exists())
+
+    def test_bad_report_after_command_preserves_command_failure_and_output(self):
+        self.python.write_text(FAKE_PYTHON.replace("print('controlled check passed')", "(state / 'pytest.xml').unlink(); (state / 'pytest.xml').symlink_to('/unavailable')\nprint('controlled stderr', file=sys.stderr)\nsys.exit(9)"))
+        result=self.invoke(task='test', collectTestReports=True)
+        self.assertFalse(result['ok']); self.assertEqual(result['exitCode'],9)
+        self.assertIn('controlled stderr', result['stderr'])
+        self.assertEqual(result['testReports'], [])
+        self.assertIn('Unsafe test report', result['testReportErrors'][0])
+
+    def test_destructive_upgrade_sql_word_boundaries(self):
+        directory=self.root/'alembic/versions';directory.mkdir(parents=True)
+        (directory/'x.py').write_text('revision="x"\ndown_revision=None\ndef upgrade():\n    op.execute("DROP TABLE orders")\n    op.execute("TRUNCATE TABLE logs")\n    op.execute("DELETE FROM users")\n    op.execute("SELECT dropped FROM events")\ndef downgrade():\n    op.execute("DROP TABLE old")\n')
+        inventory=migration_inventory(self.root)
+        self.assertEqual([risk['code'] for risk in inventory['risks']], ['destructive-sql']*3)
+
+    def test_src_markdown_is_a_build_input(self):
+        source=self.root/'src/template.md';source.parent.mkdir();source.write_text('one')
+        self.assertTrue(self.invoke()['ok'])
+        source.write_text('two'); self.assertFalse(self.invoke()['reused'])
+
+    def test_state_fifo_is_not_opened_as_a_blocking_stream(self):
+        from project_runtime import state_read
+        os.mkfifo(self.state/'state.json')
+        with self.assertRaisesRegex(ValueError, 'Unsafe'):
+            state_read(self.state)
+
+    def test_runtime_request_size_is_bounded(self):
+        result=subprocess.run([sys.executable,str(RUNTIME)],input=' '* (1024*1024+1),capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,1)
+        self.assertIn('1 MiB',json.loads(result.stdout)['error'])
+
+    def test_setup_failure_cleans_spawned_process(self):
+        from unittest.mock import patch, Mock
+        from project_runtime import BuildCancelled
+        original = subprocess.Popen
+        children = []
+        def start(*args, **kwargs):
+            child = original(*args, **kwargs)
+            children.append(child)
+            return child
+        selector = Mock()
+        selector.register.side_effect = BuildCancelled('cancel during setup')
+        with patch('project_runtime.subprocess.Popen', side_effect=start), patch('project_runtime.selectors.DefaultSelector', return_value=selector):
+            with self.assertRaises(BuildCancelled):
+                run_build(self.request(task='test'), own_process_group=True)
+        self.assertIsNotNone(children[0].poll())
+        selector.close.assert_called_once()
+
+    def test_final_fingerprint_failure_is_incomplete_verification(self):
+        self.python.write_text(FAKE_PYTHON.replace("print('controlled check passed')", "source=root/'app/main.py'\nif not source.is_symlink():\n    source.unlink(); source.symlink_to(root/'missing.py')\nprint('controlled check passed')"))
+        result=self.invoke()
+        self.assertEqual(result['exitCode'], 0)
+        self.assertFalse(result['ok'])
+        self.assertTrue(result['verificationIncomplete'])
+        self.assertIn('symlink',result['cacheDiagnostic'])
+
+    def test_signal_during_spawn_is_deferred_then_cleans_child(self):
+        import signal
+        from unittest.mock import patch
+        from project_runtime import BuildCancelled
+        original = subprocess.Popen
+        children = []
+        def start(*args, **kwargs):
+            child = original(*args, **kwargs)
+            children.append(child)
+            os.kill(os.getpid(), signal.SIGTERM)
+            return child
+        with patch('project_runtime.subprocess.Popen', side_effect=start):
+            with self.assertRaisesRegex(BuildCancelled, 'cancelled'):
+                run_build(self.request(task='test'), own_process_group=True)
+        self.assertIsNotNone(children[0].poll())
 
 if __name__=='__main__': unittest.main()

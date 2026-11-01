@@ -29,7 +29,7 @@ class HookTests(unittest.TestCase):
         return json.loads(result.stdout) if result.stdout else None
 
     def project(self,fastapi=True):
-        (self.root/'pyproject.toml').write_text('[project]\nname="demo"\ndependencies='+ ('["fastapi"]' if fastapi else '[]')+'\n')
+        (self.root/'pyproject.toml').write_text('[project]\nname="demo"\ndependencies='+ ('["fastapi","pytest"]' if fastapi else '[]')+'\n')
         python=self.root/'.venv/bin/python';python.parent.mkdir(parents=True)
         python.write_text(fixtures.FAKE_PYTHON);python.chmod(0o755)
 
@@ -55,6 +55,12 @@ class HookTests(unittest.TestCase):
         self.assertIsNone(self.invoke(self.root/'settings.py','DB_PASSWORD=os.getenv("DB_PASSWORD")'))
         path=self.root/'settings.py';path.write_text('DB_PASSWORD=os.getenv("DB_PASSWORD")\n')
         self.deny(self.invoke(path,tool_input={'old_string':'os.getenv("DB_PASSWORD")','new_string':'"literal"'}))
+
+    def test_edit_fifo_does_not_block_secret_guard(self):
+        if ACTION!='guard-secrets':self.skipTest('other hook')
+        path=self.root/'settings.py'
+        os.mkfifo(path)
+        self.deny(self.invoke(path,tool_input={'old_string':'old','new_string':'JWT_SECRET="literal"'}))
 
     def test_schema_guard(self):
         if ACTION!='guard-ddl':self.skipTest('other hook')
@@ -98,5 +104,51 @@ class HookTests(unittest.TestCase):
         self.project(fastapi=False)
         path=self.root/'main.py';path.write_text('value=1')
         self.assertIsNone(self.invoke(path));self.assertFalse((self.root/'.fastapi-tools/calls').exists())
+
+    def test_stop_does_not_impose_pytest_or_optional_checks(self):
+        if ACTION!='verify-on-stop':self.skipTest('other hook')
+        self.project()
+        (self.root/'pyproject.toml').write_text('[project]\nname="api"\ndependencies=["fastapi"]\n')
+        self.assertIsNone(self.invoke())
+        calls=(self.root/'.fastapi-tools/calls').read_text().splitlines()
+        self.assertEqual(len(calls),1)
+        self.assertIn('--syntax',calls[0])
+
+    def test_stop_blocks_when_verification_cannot_complete(self):
+        if ACTION!='verify-on-stop':self.skipTest('other hook')
+        self.project()
+        external=self.root/'external';external.mkdir()
+        (self.root/'.fastapi-tools').symlink_to(external,target_is_directory=True)
+        result=self.invoke()
+        self.assertEqual(result['decision'],'block')
+        self.assertIn('Unsafe test report',result['reason'])
+        self.assertEqual(list(external.iterdir()),[])
+
+    def test_stop_detects_inputs_changed_without_post_edit_hint(self):
+        if ACTION!='verify-on-stop':self.skipTest('other hook')
+        self.project();self.assertIsNone(self.invoke())
+        (self.root/'main.py').write_text('def invalid(:')
+        result=self.invoke()
+        self.assertEqual(result['decision'],'block')
+        self.assertIn('SyntaxError',result['reason'])
+
+    def test_stop_blocks_fastapi_metadata_errors_without_hijacking_generic_python(self):
+        if ACTION!='verify-on-stop':self.skipTest('other hook')
+        self.project()
+        (self.root/'pyproject.toml').write_text('[project\n')
+        (self.root/'main.py').write_text('from fastapi import FastAPI\napp=FastAPI()\n')
+        result=self.invoke()
+        self.assertEqual(result['decision'],'block')
+        self.assertIn('could not discover',result['reason'])
+        (self.root/'main.py').write_text('value=1\n')
+        self.assertNotIn('decision',self.invoke())
+
+    def test_stop_blocks_uninspectable_final_inputs(self):
+        if ACTION!='verify-on-stop':self.skipTest('other hook')
+        self.project()
+        (self.root/'linked.py').symlink_to(ROOT/'runtime/project_runtime.py')
+        result=self.invoke()
+        self.assertEqual(result['decision'],'block')
+        self.assertIn('could not be fully inspected',result['reason'])
 
 if __name__=='__main__':unittest.main()

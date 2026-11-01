@@ -1,11 +1,12 @@
-# FastAPI Tools for Claude Code
+# FastAPI Tools for Claude Code and Codex
 
-[![CI](https://github.com/alefiengo/fastapi-tools/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/alefiengo/fastapi-tools/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/alefiengo/fastapi-tools)](https://github.com/alefiengo/fastapi-tools/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Claude Code plugin for developing and reviewing FastAPI applications: 15 skills,
-seven specialist agents, five hooks and six MCP tools. Hooks and MCP share Python
-project discovery, process locks and verification records.
+A local plugin for developing and reviewing FastAPI applications: 16 shared skills
+and seven MCP tools. Claude Code also registers seven specialist agents and five
+hooks. Both hosts share Python discovery, process locks and verification records.
+Project initialization is local, explicit and separate from installation or execution.
 
 ## Requirements
 
@@ -43,13 +44,13 @@ From an existing local checkout:
 # From this repository:
 npm ci --prefix mcp-server
 cd /path/to/your/fastapi-project
-claude --plugin-dir /absolute/path/to/claude-fastapi-tools
+claude --plugin-dir /absolute/path/to/fastapi-tools
 ```
 
 For a local marketplace installation:
 
 ```bash
-claude plugin marketplace add /absolute/path/to/claude-fastapi-tools
+claude plugin marketplace add /absolute/path/to/fastapi-tools
 claude plugin install fastapi-tools@fastapi-tools-marketplace
 ```
 
@@ -58,6 +59,41 @@ Try: "Inspect this FastAPI project, run its tests and summarize failures."
 Use `/fastapi-pr-review` for a focused review. app_port defaults to 8000 and
 sets the default MCP HTTP inspection port. The plugin registers its server,
 hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
+
+## Codex and offline diagnosis
+
+After installing MCP dependencies, launch Codex from the application workspace:
+
+```bash
+cd /path/to/your/fastapi-project
+node /absolute/path/to/fastapi-tools/codex/run.mjs
+```
+
+Follow [Codex setup](docs/codex.md) to register this local plugin. The launcher
+passes the bundle path per process; it does not install the plugin or change
+user configuration. Shared skills and MCP work in both hosts. Claude agent
+permissions, Stop hooks and Python LSP registration are not Codex guarantees;
+Codex verification is explicit. See the [capability matrix](docs/capability-matrix.md).
+
+```bash
+python3 scripts/install-doctor.py --plugin-root "$PWD" --workspace /path/to/project
+```
+
+The doctor checks local prerequisites and registration without network access,
+installations, builds or host configuration changes. Run it again after upgrades.
+
+## Safe project initialization
+
+Explicitly ask to create a new FastAPI project at an absolute, absent destination.
+`initialize_project` requires `destination`, `projectName` and `explicitRequest: true`.
+The existing parent must be outside an existing Python project or workspace.
+Existing files, empty directories, dangling symlinks, symlink ancestors and nested
+projects are refused. A private sibling staging directory is cleaned up; exclusive
+OS publication prevents replacement of a destination created during generation.
+No network, dependency installation, application imports, Git initialization or
+server execution is performed. Review the generated README before explicitly
+installing dependencies or running tests. The flag represents caller authorization;
+it cannot independently prove what a user requested.
 
 ## Skills
 
@@ -68,6 +104,7 @@ hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
 - `fastapi-contract-testing`
 - `fastapi-database`
 - `fastapi-docker`
+- `fastapi-initializer`
 - `fastapi-load-testing`
 - `fastapi-modular-architecture`
 - `fastapi-observability`
@@ -99,6 +136,7 @@ verification evidence. Review selects only roles relevant to the change.
 
 | Tool | Behavior |
 |---|---|
+| initialize_project | Generate a minimal project at an absent, explicitly requested destination |
 | analyze_project | Nearest Python project, declared dependencies, environment and AST routes |
 | run_build | compile, lint, typecheck, package, dependencies or verify/check |
 | run_tests | pytest, optional relative testPath, fresh JUnit summaries |
@@ -107,12 +145,15 @@ verification evidence. Review selects only roles relevant to the change.
 | app_health | Selected health/readiness/liveness routes with configurable paths |
 
 `compile` checks Python syntax without executing imports. `lint` uses Ruff;
-`typecheck` uses mypy. `verify` runs syntax, Ruff/mypy when declared in pyproject
-or requirements, then the full pytest suite. `package` uses build --no-isolation.
+`typecheck` uses mypy. `verify` runs syntax and Ruff, mypy or pytest when declared or configured
+(including standalone configuration files). `package` uses build --no-isolation.
 Missing dependencies and pytest's no-tests exit code are failures. Tools do not
 install dependencies: uv uses --frozen --offline --no-sync. Synchronize the project
 environment explicitly before running checks. Test selectors must remain inside
-the project. Workspace/module aggregation is outside static discovery.
+the project. Workspace/module aggregation is outside static discovery. Explicit lint/typecheck/test
+requests require a declaration or configuration and fail if the tool is unavailable. A project
+without pytest runs syntax and its configured checks; a configured pytest suite
+with no collected tests retains pytest’s failure status.
 
 Static analysis never imports application modules or Alembic env.py. Dependencies
 are declarations, not a resolved graph; includes in requirements files and dynamic
@@ -156,6 +197,24 @@ bash tests/run-all.sh
 python3 -m pip install -r tests/examples/requirements.txt
 bash tests/examples/check.sh
 ```
+
+Real tool integration uses separately prepared dependencies and exercises venv,
+uv, Poetry, pytest, Ruff, mypy and Alembic. See [validation and limits](docs/audit-2026-10-31.md).
+No measured skill or agent benefit is claimed; the [evidence inventory](docs/component-evidence.json)
+and [offline evaluation methodology](docs/evaluation-methodology.md) distinguish
+functional coverage from behavioral outcomes. GitHub Actions and automatic
+Dependabot updates are disabled for this repository; application CI templates
+remain available in `fastapi-ci`.
+
+## Upgrade and release
+
+Update the checkout to the exact release tag, run `npm ci --prefix mcp-server`,
+run the doctor, and restart the host. Marketplace users must update their installed
+bundle and install MCP dependencies there; updating a source checkout does not
+refresh a host cache. For Codex, update the same registered local path and relaunch
+through `codex/run.mjs`. The 0.3.0 release adds explicit initialization and Codex;
+verification no longer requires undeclared pytest. See [CHANGELOG.md](CHANGELOG.md)
+and the [release procedure](docs/releases.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
 [behavioral evaluations](evals/README.md) and [SECURITY.md](SECURITY.md).

@@ -11,6 +11,12 @@ Migrate incrementally with contract tests. Replace parse_obj with model_validate
 
 Review Optional fields: `str | None` accepts None but is required unless given a default. Audit coercion, aliases, Decimal/datetime JSON representation, custom types, validation error shape and schema generation. Avoid mixing nested v1/v2 models without documented support for the installed versions.
 
+Test omitted, explicit null and invalid values separately. In v2, a TypeError
+raised inside a validator is no longer converted into ValidationError; distinguish
+a validator bug from rejected client input. For ORM responses, `from_attributes`
+reads attributes and may trigger database I/O: eager-load required relationships
+within the session rather than expecting Pydantic to await lazy loading.
+
 Preserve public API behavior or document a deliberate breaking release. Run schema compatibility checks, request/response tests, settings tests and full verification after each stage. Do not claim migration complete from imports or syntax checking alone.
 
 Reference: https://fastapi.tiangolo.com/how-to/migrate-from-pydantic-v1-to-pydantic-v2/

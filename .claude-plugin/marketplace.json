@@ -8,8 +8,8 @@
     {
       "name": "fastapi-tools",
       "source": "./",
-      "description": "FastAPI toolkit: 15 skills, seven specialist agents, five hooks and six MCP tools with shared Python verification.",
-      "version": "0.1.0",
+      "description": "FastAPI skills, specialist agents, safe initialization and shared-runtime MCP tools",
+      "version": "0.3.0",
       "author": {
         "name": "alefiengo"
       },

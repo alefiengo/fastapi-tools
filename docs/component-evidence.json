@@ -1,0 +1,892 @@
+{
+  "schemaVersion": 1,
+  "task": "B1",
+  "reviewDate": "2026-10-31",
+  "reference": {
+    "path": "/home/alefiengo/dev/ai/spring-boot-tools",
+    "tag": "v0.3.0",
+    "commit": "ba3c6cf541983d0164c10021ed9e1e0ae81905c1",
+    "access": "read-only",
+    "adaptation": "Diseño independiente para FastAPI/Pydantic/SQLAlchemy/Alembic; sin copiar componentes Spring."
+  },
+  "behavioralBenefit": "NOT MEASURED / NO MEDIDO",
+  "paidEvaluationsRun": 0,
+  "initializerContract": {
+    "mcpTool": "initialize_project",
+    "arguments": [
+      "destination",
+      "projectName",
+      "explicitRequest"
+    ],
+    "runtimeAction": "initialize",
+    "status": "director-confirmed",
+    "invariants": [
+      "absent destination",
+      "explicit destination authorization",
+      "protected Python/workspace ancestors",
+      "generation separate from installation/execution"
+    ]
+  },
+  "sources": [
+    {
+      "id": "claude-evals",
+      "url": "https://code.claude.com/docs/en/plugin-evals",
+      "consulted": "2026-10-31",
+      "decision": "Activación, calidad y ablación son señales distintas; grants/scaffold/MCP real requieren configuración explícita."
+    },
+    {
+      "id": "claude-skills",
+      "url": "https://code.claude.com/docs/en/skills",
+      "consulted": "2026-10-31",
+      "decision": "Frontmatter y reglas de invocación son producto; mantener sus permisos."
+    },
+    {
+      "id": "claude-agents",
+      "url": "https://code.claude.com/docs/en/sub-agents",
+      "consulted": "2026-10-31",
+      "decision": "Tools define las capacidades declaradas del agente."
+    },
+    {
+      "id": "claude-cli",
+      "url": "https://code.claude.com/docs/en/cli-reference",
+      "consulted": "2026-10-31",
+      "decision": "Límite estimado --max-budget-usd; no garantiza gasto de facturación exacto."
+    },
+    {
+      "id": "fastapi-tests",
+      "url": "https://fastapi.tiangolo.com/advanced/async-tests/",
+      "consulted": "2026-10-31",
+      "decision": "HTTPX no activa lifespan por sí solo."
+    },
+    {
+      "id": "pydantic-migration",
+      "url": "https://docs.pydantic.dev/latest/migration/",
+      "consulted": "2026-10-31",
+      "decision": "Required/nullable, TypeError y serialización cambian en v2."
+    },
+    {
+      "id": "sqlalchemy-sessions",
+      "url": "https://docs.sqlalchemy.org/en/20/orm/session_basics.html",
+      "consulted": "2026-10-31",
+      "decision": "Una sesión representa una transacción; rollback tras fallo de flush."
+    },
+    {
+      "id": "sqlalchemy-async",
+      "url": "https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html",
+      "consulted": "2026-10-31",
+      "decision": "AsyncSession por tarea y evitar I/O implícita al leer atributos."
+    },
+    {
+      "id": "alembic-autogenerate",
+      "url": "https://alembic.sqlalchemy.org/en/latest/autogenerate.html",
+      "consulted": "2026-10-31",
+      "decision": "Autogenerate requiere revisión, no infiere renames; check comparte sus límites."
+    }
+  ],
+  "components": [
+    {
+      "id": "fastapi-api-designer",
+      "kind": "agent",
+      "path": "agents/fastapi-api-designer.md",
+      "sourceSha256": "3c173a2972b41fb292cb08db4155ebe0438c8cd42b7bed710253631eb0f0ef79",
+      "trigger": "Delegación de diseño HTTP/Pydantic; sólo documentos de contrato.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_lifecycle.py",
+          "tests/examples/test_pydantic_async.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "architecture-design-scope"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "design-contract-implementation"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-architect",
+      "kind": "agent",
+      "path": "agents/fastapi-architect.md",
+      "sourceSha256": "fe194c21a8e9cea06338d5f2a840b0e5059dfdb780cdb0db5fa88bbd89221994",
+      "trigger": "Delegación de diseño de módulos; sólo documentos de diseño.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "architecture-design-scope",
+          "module-boundaries"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "architecture-guide-and-designer"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-code-reviewer",
+      "kind": "agent",
+      "path": "agents/fastapi-code-reviewer.md",
+      "sourceSha256": "5fb7f3c3b572e228bbec7ad073f488483a092bbb25c882b5237b4686ce4f89e3",
+      "trigger": "Revisión de comportamiento, autenticación y contratos; sólo lectura.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_lifecycle.py",
+          "tests/examples/test_pydantic_async.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "jwt-api",
+          "codegen-router"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-docker-reviewer",
+      "kind": "agent",
+      "path": "agents/fastapi-docker-reviewer.md",
+      "sourceSha256": "e4c4f1e403560017e4de9663096b695690e79e222c6f0dfb0d8802c41203d97b",
+      "trigger": "Revisión de imágenes, probes, volúmenes y CI; sólo lectura.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "postgres18-volume"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "docker-guide-and-reviewer"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-migration-reviewer",
+      "kind": "agent",
+      "path": "agents/fastapi-migration-reviewer.md",
+      "sourceSha256": "88a0fd4ecb7e5001fe0047c103e5ee30719a04fb72468c94fbadfc03daff7054",
+      "trigger": "Revisión de historial, DDL y despliegue gradual; sólo lectura.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_sqlalchemy.py",
+          "tests/examples/test_alembic.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "alembic-check-scope",
+          "migration-compatibility-gates",
+          "applied-migration"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "database-and-reviewers"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-runtime-reviewer",
+      "kind": "agent",
+      "path": "agents/fastapi-runtime-reviewer.md",
+      "sourceSha256": "bf57fcbf11d33c45035e2a06b44f51ff7f7617bed82f47537e42794f4cb5ce00",
+      "trigger": "Revisión de sesiones, concurrencia y lifespan; sólo lectura.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_sqlalchemy.py",
+          "tests/examples/test_alembic.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "async-runtime-review",
+          "performance-evidence-first"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "database-and-reviewers",
+        "measurement-and-load"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-test-writer",
+      "kind": "agent",
+      "path": "agents/fastapi-test-writer.md",
+      "sourceSha256": "24b4d43bc9e076e036a1add2806573d0df02d6a6ef66a085f51394584ad7f387",
+      "trigger": "Delegación para escribir tests/fixtures sin modificar producción ni ejecutarlos.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/fixture_test.py",
+          "tests/examples/test_lifecycle.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "test-writer-behavior"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "test-guidance-and-writer"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-api-contracts",
+      "kind": "skill",
+      "path": "skills/fastapi-api-contracts/SKILL.md",
+      "sourceSha256": "a67a3bde73f75cf8eec66fda4f0be7c6f47ea82acd7889dd6fa7d1912512783f",
+      "trigger": "Diseñar o cambiar contratos HTTP, errores y serialización pública.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_lifecycle.py",
+          "tests/examples/test_pydantic_async.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "pydantic-wire-compatibility",
+          "codegen-router"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "design-contract-implementation",
+        "contracts-and-contract-tests"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-build-run",
+      "kind": "skill",
+      "path": "skills/fastapi-build-run/SKILL.md",
+      "sourceSha256": "efb50fa123b2a92adb6d7790ec76a0fde1f99e9aa71678c1e3ee3f3bddacff5b",
+      "trigger": "Arranque, entorno Python o verificación de una aplicación existente.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_lifecycle.py",
+          "tests/examples/test_pydantic_async.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "build-tool-choice"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-ci",
+      "kind": "skill",
+      "path": "skills/fastapi-ci/SKILL.md",
+      "sourceSha256": "87352b9c2b837c23ca2c7c55eb5cc117bc23facfc72efa3fed51615b6cb86f56",
+      "trigger": "Solicitud de cambiar pipelines FastAPI con las herramientas declaradas.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "ci-tool-choice"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "docker-guide-and-reviewer"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-codegen",
+      "kind": "skill",
+      "path": "skills/fastapi-codegen/SKILL.md",
+      "sourceSha256": "f95a2657874e1e716cc2f3badd62c2e67c28fe12de1b098a7b9e13df682eb126",
+      "trigger": "Implementar una ruta o funcionalidad FastAPI montada e integrada.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_lifecycle.py",
+          "tests/examples/test_pydantic_async.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "codegen-router"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "design-contract-implementation"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-contract-testing",
+      "kind": "skill",
+      "path": "skills/fastapi-contract-testing/SKILL.md",
+      "sourceSha256": "fa3eed564701321bfb7525f50242561fdbdd3eb07e983893ee9669bae6935d87",
+      "trigger": "Compatibilidad entre consumidor/proveedor y ciclo de publicación autorizado.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "contract-release-cycle"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "contracts-and-contract-tests"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-database",
+      "kind": "skill",
+      "path": "skills/fastapi-database/SKILL.md",
+      "sourceSha256": "a6ad9192e2c31b6fb84cab9ef604139bdb99c4fb6799a08b25ad91b5ee440f6f",
+      "trigger": "Sesiones, transacciones, consultas y revisiones Alembic.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_sqlalchemy.py",
+          "tests/examples/test_alembic.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "applied-migration",
+          "alembic-check-scope",
+          "bad-alembic-revision"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "database-and-reviewers"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-docker",
+      "kind": "skill",
+      "path": "skills/fastapi-docker/SKILL.md",
+      "sourceSha256": "67281dd94ab57f60ba55e5cc71d8a8c15971adf94110c51286e7733f5224558e",
+      "trigger": "Construcción/arranque de contenedores y persistencia por versión.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "postgres18-volume"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "docker-guide-and-reviewer"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-initializer",
+      "kind": "skill",
+      "path": "skills/fastapi-initializer/SKILL.md",
+      "sourceSha256": "1d362e0fdc861d66ae364d52e4a4b5151689bb0b56926367b2d11f9d35ed25d3",
+      "trigger": "Generar un proyecto nuevo en destino ausente explícitamente autorizado.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/ablation_test.py",
+          "tests/evaluations/judge_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "initializer-positive",
+          "initializer-existing-project-refusal",
+          "initializer-no-authorization"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [],
+      "decision": "retain",
+      "limitations": [
+        "MCP/runtime implementado y validado por director; los tests B1 no acreditan generación real."
+      ]
+    },
+    {
+      "id": "fastapi-load-testing",
+      "kind": "skill",
+      "path": "skills/fastapi-load-testing/SKILL.md",
+      "sourceSha256": "9907e9d1b180214fea676c94502746b6c11cfdfe91605c23e9711c70c692cacb",
+      "trigger": "Diseñar o ejecutar carga autorizada con umbrales medibles.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "load-acceptance-cycle",
+          "locust-workload"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "measurement-and-load"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-modular-architecture",
+      "kind": "skill",
+      "path": "skills/fastapi-modular-architecture/SKILL.md",
+      "sourceSha256": "71e03f226fcde2669f9456a37c54c57bf91d298cfc97c739086e774e2f8783e2",
+      "trigger": "Fronteras de módulos, ciclos y dirección de dependencias.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "module-boundaries"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "architecture-guide-and-designer"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-observability",
+      "kind": "skill",
+      "path": "skills/fastapi-observability/SKILL.md",
+      "sourceSha256": "2c20d8e1cf4f6794b359fe873152c7ab02cc121686c3183b56e821f72bc94d07",
+      "trigger": "Diagnóstico de logs, trazas, métricas y probes reales.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_lifecycle.py",
+          "tests/examples/test_pydantic_async.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "fastapi-tracing",
+          "no-built-in-health"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-performance",
+      "kind": "skill",
+      "path": "skills/fastapi-performance/SKILL.md",
+      "sourceSha256": "bee485077b0335d1d9f134bb7959dcea3b705ce7407113ed4f244fb371f3e202",
+      "trigger": "Latencia o capacidad que requiere una línea base reproducible.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "performance-evidence-first"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "measurement-and-load"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-pr-review",
+      "kind": "skill",
+      "path": "skills/fastapi-pr-review/SKILL.md",
+      "sourceSha256": "8c766e792d62838d3149a5c04fa89c2fe6d8ff079a912b57a515f5170474778f",
+      "trigger": "Revisión de PR/diff solicitada explícitamente.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "pr-docs-selectivity"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-pydantic-v1-to-v2-migration",
+      "kind": "skill",
+      "path": "skills/fastapi-pydantic-v1-to-v2-migration/SKILL.md",
+      "sourceSha256": "d49fd0aab43880e738eb0aa9e10693e57ebcb389de0ebd82045980a8d9c49f41",
+      "trigger": "Migración Pydantic y conservación del contrato wire.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/examples/test_lifecycle.py",
+          "tests/examples/test_pydantic_async.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "pydantic-wire-compatibility"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-security-hardening",
+      "kind": "skill",
+      "path": "skills/fastapi-security-hardening/SKILL.md",
+      "sourceSha256": "6a004eccf33980bb50c9eaed30cde2fc3340ede95e902fd9f24bc64f3443f3af",
+      "trigger": "Revisión de autenticación, autorización y superficie cookie/bearer.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/component_inventory_test.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "cookie-bearer-security",
+          "jwt-api"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    },
+    {
+      "id": "fastapi-testing",
+      "kind": "skill",
+      "path": "skills/fastapi-testing/SKILL.md",
+      "sourceSha256": "c287af53ebac588f9524415ba1c07529dee46b9771bbaaef847055bfbbc3bd70",
+      "trigger": "Escribir o diagnosticar pruebas, fixtures y aislamiento.",
+      "functionalEvidence": {
+        "status": "structural-and-related-regressions",
+        "paths": [
+          "tests/evaluations/fixture_test.py",
+          "tests/examples/test_lifecycle.py"
+        ],
+        "scope": "Integridad del componente y ejemplos/regresiones relacionadas; no ejecución de decisiones de un modelo."
+      },
+      "behavioralEvidence": {
+        "status": "not-measured",
+        "observedGenerations": 0,
+        "effectSize": null,
+        "cases": [
+          "test-writer-behavior",
+          "async-runtime-review"
+        ],
+        "activationEvidence": "criteria-authored-not-executed",
+        "limits": "Rubricas prospectivas. Sin ejecución pagada ni conclusión causal sobre beneficio."
+      },
+      "redundancyGroups": [
+        "test-guidance-and-writer"
+      ],
+      "decision": "retain",
+      "limitations": [
+        "La presencia del texto o un ejemplo correcto no mide su influencia sobre un modelo."
+      ]
+    }
+  ],
+  "redundancyReview": [
+    {
+      "id": "design-contract-implementation",
+      "members": [
+        "fastapi-api-contracts",
+        "fastapi-api-designer",
+        "fastapi-codegen"
+      ],
+      "finding": "Comparten reglas de contratos; producen guía, documentos y código respectivamente. Los permisos del diseñador limitan su salida.",
+      "decision": "retain",
+      "causalEvidence": "not-measured"
+    },
+    {
+      "id": "test-guidance-and-writer",
+      "members": [
+        "fastapi-testing",
+        "fastapi-test-writer"
+      ],
+      "finding": "Comparten fixtures/rollback; el agente sólo escribe tests y el caller ejecuta. La skill permite el flujo de verificación.",
+      "decision": "retain",
+      "causalEvidence": "not-measured"
+    },
+    {
+      "id": "database-and-reviewers",
+      "members": [
+        "fastapi-database",
+        "fastapi-migration-reviewer",
+        "fastapi-runtime-reviewer"
+      ],
+      "finding": "La skill guía cambios de persistencia; los revisores sólo inspeccionan y separan DDL de ejecución/sesiones.",
+      "decision": "retain",
+      "causalEvidence": "not-measured"
+    },
+    {
+      "id": "measurement-and-load",
+      "members": [
+        "fastapi-performance",
+        "fastapi-load-testing",
+        "fastapi-runtime-reviewer"
+      ],
+      "finding": "Diagnóstico, generación de carga autorizada e inspección estática son intervenciones distintas. Ninguna acredita rendimiento por sí sola.",
+      "decision": "retain",
+      "causalEvidence": "not-measured"
+    },
+    {
+      "id": "architecture-guide-and-designer",
+      "members": [
+        "fastapi-modular-architecture",
+        "fastapi-architect"
+      ],
+      "finding": "La skill puede guiar cambios y checks; el agente escribe únicamente diseño. Evitar imponer capas/import-linter.",
+      "decision": "retain",
+      "causalEvidence": "not-measured"
+    },
+    {
+      "id": "docker-guide-and-reviewer",
+      "members": [
+        "fastapi-docker",
+        "fastapi-docker-reviewer",
+        "fastapi-ci"
+      ],
+      "finding": "Hay solapamiento de despliegue; guía de implementación, revisión de sólo lectura y pipelines tienen triggers diferentes.",
+      "decision": "retain",
+      "causalEvidence": "not-measured"
+    },
+    {
+      "id": "contracts-and-contract-tests",
+      "members": [
+        "fastapi-api-contracts",
+        "fastapi-contract-testing"
+      ],
+      "finding": "Diseño del contrato HTTP difiere de verificar consumidores/proveedor y gates de publicación.",
+      "decision": "retain",
+      "causalEvidence": "not-measured"
+    }
+  ]
+}

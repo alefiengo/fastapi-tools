@@ -18,6 +18,9 @@ test('plugin, marketplace and MCP package versions agree', () => {
   assert.equal(entry.version, plugin.version);
   assert.match(plugin.version, /^\d+\.\d+\.\d+$/);
   assert.equal(json('mcp-server/package.json').version, plugin.version);
+  assert.equal(json('.codex-plugin/plugin.json').version, plugin.version);
+  assert.equal(json('mcp-server/package-lock.json').packages[''].version, plugin.version);
+  assert.equal(read('mcp-server/index.js').match(/name: "mcp-fastapi", version: "([^"]+)"/)[1], plugin.version);
 });
 
 test('the standalone LSP map registers a Python server with the required fields', () => {
@@ -84,15 +87,26 @@ test('MCP lockfile matches package metadata and declared direct dependencies', (
   const lock = json('mcp-server/package-lock.json');
   assert.equal(lock.version, pkg.version);
   assert.deepEqual(lock.packages[''].dependencies, pkg.dependencies);
+  assert.deepEqual(lock.packages[''].devDependencies, pkg.devDependencies);
   assert.deepEqual(lock.packages[''].engines, pkg.engines);
   assert.ok(pkg.engines.node);
+});
+
+test('maintenance instructions stay separate and repository automation is disabled', () => {
+  assert.ok(existsSync(path.join(root, 'AGENTS.md')));
+  assert.equal(frontmatter('docs/skills/repo-director/SKILL.md').name, 'repo-director');
+  assert.ok(!existsSync(path.join(root, 'skills/repo-director')));
+  assert.ok(!existsSync(path.join(root, '.github/dependabot.yml')));
+  const workflows = path.join(root, '.github/workflows');
+  assert.ok(!existsSync(workflows) || readdirSync(workflows).length === 0);
+  assert.ok(!read('README.md').includes('/actions/workflows/'));
 });
 
 
 test('registered components and shared runtime are consistent', () => {
   const agents = readdirSync(path.join(root, 'agents')).filter(f => f.endsWith('.md')).sort();
   assert.deepEqual(agents, ['fastapi-api-designer.md', 'fastapi-architect.md', 'fastapi-code-reviewer.md', 'fastapi-docker-reviewer.md', 'fastapi-migration-reviewer.md', 'fastapi-runtime-reviewer.md', 'fastapi-test-writer.md']);
-  assert.equal(readdirSync(path.join(root, 'skills')).length, 15);
+  assert.equal(readdirSync(path.join(root, 'skills')).length, 16);
   assert.ok(!json('.claude-plugin/plugin.json').experimental?.monitors);
   const hooks = json('hooks/hooks.json').hooks;
   assert.equal(Object.values(hooks).flatMap(entries => entries.flatMap(entry => entry.hooks)).length, 5);
