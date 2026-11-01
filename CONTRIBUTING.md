@@ -3,9 +3,6 @@
 This repository distributes a plugin, not a FastAPI application. Read AGENTS.md
 and docs/architecture.md first. Maintenance coordination is documented separately
 in docs/skills/repo-director/SKILL.md; shipped skills/ and agents/ are product.
-FastAPI Tools is maintained and released independently of Spring Boot Tools.
-Development and validation use this repository and its prerequisites; another
-repository is not a required reference or dependency.
 Keep FastAPI/Python conventions and applications’ existing tool choices. Read
 official tool documentation before changing behavior; record sources and limits.
 Reviewers use Read, Glob and Grep only; designers and test writers have scoped output.

@@ -5,11 +5,6 @@ checks to runtime/project_runtime.py, a Python 3.11+ standard-library runtime.
 Bash hook launchers invoke hooks/scripts/hook-runtime.py, which shares that
 runtime. Application code is never imported by static inspection.
 
-All plugin runtime modules, hooks, host adapters and validation fixtures belong
-to this repository. Spring Boot Tools is an independent project and is not a
-runtime, installation, development or validation dependency. Shared runtime in
-this document means reuse between this plugin's own hooks and MCP server.
-
 ## Discovery and commands
 
 Walk upward to the nearest pyproject.toml, requirements.txt, setup.cfg or setup.py.

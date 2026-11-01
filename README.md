@@ -235,18 +235,6 @@ through `codex/run.mjs`. The 0.3.0 release adds explicit initialization and Code
 verification no longer requires undeclared pytest. See [CHANGELOG.md](CHANGELOG.md)
 and the [release procedure](docs/releases.md).
 
-The published tags are v0.1.0 (2026-10-08) and v0.3.0 (2026-10-31, America/La_Paz).
-There was no v0.2.0 tag or release. See [CHANGELOG.md](CHANGELOG.md) for that
-numbering decision. FastAPI Tools versions follow this repository's changes.
-
-## Independent project
-
-FastAPI Tools and Spring Boot Tools are independent projects. FastAPI Tools has
-its own implementation, dependencies, maintenance, roadmap, versions and releases.
-Installing, running, testing and maintaining this plugin requires only this
-repository and its documented prerequisites. Historical shared commits and a
-one-time maintenance comparison do not couple the two projects.
-
 See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
 [behavioral evaluations](evals/README.md) and [SECURITY.md](SECURITY.md).
 Licensed under the [MIT license](LICENSE).

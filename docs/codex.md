@@ -84,8 +84,7 @@ El handoff explícito de ruta evita depender de expansión de `${PLUGIN_ROOT}`
 en el loader de compatibilidad. Las pruebas propias de este repositorio validan
 el wrapper y su configuración con Codex 0.166.0; no prueban la interpolación
 automática de esa variable. No se afirma compatibilidad de un inicio bare `codex`
-sin la variable ni de un inicio desktop sin este entorno. Este adaptador no
-requiere archivos, instalación ni configuración de Spring Boot Tools.
+sin la variable ni de un inicio desktop sin este entorno.
 
 ## Doctor offline
 

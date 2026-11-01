@@ -5,10 +5,8 @@ Actions and automatic Dependabot updates are disabled; retain security alerts,
 secret scanning and all other PR/history/delete/force-push protections. Do not
 claim a hosted CI matrix when only local evidence exists.
 
-Choose versions exclusively from FastAPI Tools changes. This project has its own
-release lifecycle; do not align versions or release decisions with another project.
-The historical 0.1.0 to 0.3.0 jump is explained in CHANGELOG.md and establishes no
-cross-project relationship. Record numbering exceptions explicitly.
+Choose versions from changes to the public tools, configuration and installation
+contract. Record compatibility changes and version history in CHANGELOG.md.
 
 1. Select a semantic version and align Claude manifest, marketplace entry, Codex
    manifest, MCP package, both lockfile root versions, MCP initialization literal
