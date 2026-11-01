@@ -11,14 +11,17 @@ Project initialization is local, explicit and separate from installation or exec
 ## Requirements
 
 - Node.js 20.3+ and npm for the MCP server.
-- Python 3.11+ and Bash on Linux, macOS or WSL for the plugin runtime.
-- The application's compatible Python 3.11+ environment and installed test dependencies.
+- Python 3.11+, Bash and POSIX facilities for the plugin runtime; native Windows is unsupported.
+- The application's compatible Python 3.11+ environment and its declared/configured check tools.
 - uv for projects with uv.lock, Poetry for projects with poetry.lock; otherwise
   .venv/bin/python is preferred, with the runtime interpreter as fallback.
 - Optional Python diagnostics: pyright-langserver on PATH.
 
 Inspect the application's dependency constraints. Guidance covers FastAPI,
 Pydantic, SQLAlchemy/SQLModel and Alembic without prescribing an application version.
+Validation used Linux, Node 24.21.0 and Python 3.12.10/3.12.14. macOS and WSL are
+implementation targets without an executed validation matrix. The prerequisite
+ranges above are not evidence that every Node/Python combination was tested.
 
 ## Install and use
 
@@ -56,27 +59,30 @@ claude plugin install fastapi-tools@fastapi-tools-marketplace
 
 Install server dependencies in the installed plugin's mcp-server directory.
 Try: "Inspect this FastAPI project, run its tests and summarize failures."
-Use `/fastapi-pr-review` for a focused review. app_port defaults to 8000 and
-sets the default MCP HTTP inspection port. The plugin registers its server,
+Use `/fastapi-tools:fastapi-pr-review` in Claude Code for a focused review.
+Plugin skills use the [plugin namespace](https://code.claude.com/docs/en/plugins).
+app_port defaults to 8000 and sets the default MCP HTTP inspection port.
+The plugin registers its server,
 hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
 
 ## Codex and offline diagnosis
 
-After installing MCP dependencies, launch Codex from the application workspace:
+Register the local plugin following [Codex setup](docs/codex.md), then install
+MCP dependencies and launch Codex from the application workspace:
 
 ```bash
 cd /path/to/your/fastapi-project
 node /absolute/path/to/fastapi-tools/codex/run.mjs
 ```
 
-Follow [Codex setup](docs/codex.md) to register this local plugin. The launcher
-passes the bundle path per process; it does not install the plugin or change
-user configuration. Shared skills and MCP work in both hosts. Claude agent
+The launcher passes the bundle path per process; it does not install the plugin
+or change user configuration. Shared skills and MCP work in both hosts. Claude agent
 permissions, Stop hooks and Python LSP registration are not Codex guarantees;
 Codex verification is explicit. See the [capability matrix](docs/capability-matrix.md).
 
 ```bash
-python3 scripts/install-doctor.py --plugin-root "$PWD" --workspace /path/to/project
+python3 /absolute/path/to/fastapi-tools/scripts/install-doctor.py \
+  --workspace /path/to/project --project /path/to/project
 ```
 
 The doctor checks local prerequisites and registration without network access,
@@ -88,7 +94,8 @@ Explicitly ask to create a new FastAPI project at an absolute, absent destinatio
 `initialize_project` requires `destination`, `projectName` and `explicitRequest: true`.
 The existing parent must be outside an existing Python project or workspace.
 Existing files, empty directories, dangling symlinks, symlink ancestors and nested
-projects are refused. A private sibling staging directory is cleaned up; exclusive
+projects are refused. Private sibling staging is removed on handled failures and
+cancellation; abrupt termination can leave a private staging directory. Exclusive
 OS publication prevents replacement of a destination created during generation.
 No network, dependency installation, application imports, Git initialization or
 server execution is performed. Review the generated README before explicitly
@@ -114,9 +121,10 @@ it cannot independently prove what a user requested.
 - `fastapi-security-hardening`
 - `fastapi-testing`
 
-Skills activate for FastAPI work through their descriptions. PR review is an
-explicit command. The Pydantic migration skill checks installed versions before
-changing models, settings or serialization.
+Skill descriptions guide host/model selection; activation and response quality
+have not been measured. PR review is explicitly invoked. The Pydantic migration
+skill instructs the caller to inspect installed versions before changing models,
+settings or serialization; the skill itself is not an executable version check.
 
 ## Agents
 
@@ -128,9 +136,11 @@ changing models, settings or serialization.
 - `fastapi-runtime-reviewer`
 - `fastapi-test-writer`
 
-Reviewers are read-only. Architect/API designer write design or contract documents;
-test-writer writes tests and fixtures. The caller owns execution and provides
-verification evidence. Review selects only roles relevant to the change.
+Claude reviewer definitions allow Read, Glob and Grep only. Architect/API designer
+instructions scope their output to design or contract documents; test-writer
+instructions scope it to tests and fixtures. These writing scopes are instructions,
+not filesystem isolation. The caller owns execution and provides verification
+evidence. Review selects only roles relevant to the change.
 
 ## MCP tools
 
@@ -144,7 +154,7 @@ verification evidence. Review selects only roles relevant to the change.
 | openapi_endpoints | Static, runtime /openapi.json or comparison; configurable documentPath |
 | app_health | Selected health/readiness/liveness routes with configurable paths |
 
-`compile` checks Python syntax without executing imports. `lint` uses Ruff;
+`compile` checks Python syntax without importing application modules. `lint` uses Ruff;
 `typecheck` uses mypy. `verify` runs syntax and Ruff, mypy or pytest when declared or configured
 (including standalone configuration files). `package` uses build --no-isolation.
 Missing dependencies and pytest's no-tests exit code are failures. Tools do not
@@ -178,7 +188,10 @@ explicit baseUrl, fetches no external schema references and forwards no credenti
 | verify-on-stop | Stop | Run or reuse equivalent successful full verification |
 
 Build hooks activate only for projects with a FastAPI declaration or import.
-Prose-only inputs are excluded from fingerprints. Checks serialize per project;
+After metadata errors, Stop blocks when static FastAPI import evidence remains;
+otherwise it reports a diagnostic without establishing framework identity.
+Files ending in .md, .rst or .adoc outside src are excluded from fingerprints;
+those under src remain build inputs. Checks serialize per project;
 reuse requires matching task, test scope, environment and file contents. Failed,
 cancelled or targeted test runs cannot satisfy the full gate. Force a rerun with
 `run_build` force:true (CLI reuse:false). Generated state stays in private temporary
@@ -186,16 +199,22 @@ directories; pytest reports are written to the target project's .fastapi-tools/.
 
 Guards cover common scalar settings and direct Python assignments/calls. They are
 review aids, not complete secret scanners or an enforcement boundary. Malformed
-hook input or missing Python produces a diagnostic. Keep independent CI checks.
+hook input or missing Python produces a diagnostic. Keep independent checks in
+the application's CI.
 
 ## Development
 
 ```bash
+npm ci --prefix mcp-server
 node --check mcp-server/index.js
+# Choose an existing writable temporary base outside any project/workspace.
+# /var/tmp was used on the validated Linux host; /tmp contains a project marker there.
+export TMPDIR=/var/tmp
 bash tests/run-all.sh
-# Install example-only dependencies, then exercise a real FastAPI lifecycle:
-python3 -m pip install -r tests/examples/requirements.txt
-bash tests/examples/check.sh
+# Prepare example dependencies in a local environment, then exercise FastAPI:
+python3 -m venv .fastapi-tools/example-env
+.fastapi-tools/example-env/bin/python -m pip install -r tests/examples/requirements.txt
+EXAMPLES_PYTHON="$PWD/.fastapi-tools/example-env/bin/python" bash tests/examples/check.sh
 ```
 
 Real tool integration uses separately prepared dependencies and exercises venv,
@@ -216,8 +235,22 @@ through `codex/run.mjs`. The 0.3.0 release adds explicit initialization and Code
 verification no longer requires undeclared pytest. See [CHANGELOG.md](CHANGELOG.md)
 and the [release procedure](docs/releases.md).
 
+The published tags are v0.1.0 (2026-10-08) and v0.3.0 (2026-10-31, America/La_Paz).
+There was no v0.2.0 tag or release. During the parity work, 0.3.0 was selected to
+match the reference repository's version number; that choice did not require an
+intermediate release and does not establish equivalent capabilities. Future
+FastAPI Tools versions follow this repository's changes independently.
+
+## Origin
+
+This repository started from [Spring Boot Tools](https://github.com/alefiengo/spring-boot-tools)
+and retains its initial Git history. Commit
+[2887440](https://github.com/alefiengo/fastapi-tools/commit/2887440a9ecfe211142d28a4ab28ba70ddd13908)
+adapted the plugin to FastAPI/Python on 2026-10-08. The later 0.3.0 work used
+Spring Boot Tools v0.3.0 as a read-only design reference and added FastAPI-specific
+implementation and validation here. This attribution describes provenance;
+capability and compatibility claims are bounded by this repository's evidence.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
 [behavioral evaluations](evals/README.md) and [SECURITY.md](SECURITY.md).
 Licensed under the [MIT license](LICENSE).
-Adapted from [Spring Boot Tools](https://github.com/alefiengo/spring-boot-tools)
-for FastAPI and Python.

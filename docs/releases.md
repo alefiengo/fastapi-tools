@@ -5,8 +5,14 @@ Actions and automatic Dependabot updates are disabled; retain security alerts,
 secret scanning and all other PR/history/delete/force-push protections. Do not
 claim a hosted CI matrix when only local evidence exists.
 
+Choose versions from FastAPI Tools changes independently of the reference
+repository. The published 0.1.0 to 0.3.0 jump matched the reference's number during
+the parity work; it did not represent an intervening 0.2.0 release or prove equal
+capabilities. Record any numbering exception explicitly in CHANGELOG.md.
+
 1. Select a semantic version and align Claude manifest, marketplace entry, Codex
-   manifest, MCP package, both lockfile root versions and MCP initialization literal.
+   manifest, MCP package, both lockfile root versions, MCP initialization literal
+   and the expected-version guard in scripts/install-doctor.py.
    Keep identity and existing dependency resolutions unless an audited fix needs change.
 2. Update changelog, upgrade instructions, compatibility, security and audit evidence.
    Run CONTRIBUTING.md checks, offline doctor, host registration smoke, real Python
