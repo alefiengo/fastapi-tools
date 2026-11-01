@@ -34,6 +34,16 @@ git diff --check
 
 Prepare example dependencies in an isolated environment and run
 `EXAMPLES_PYTHON=/absolute/environment/bin/python bash tests/examples/check.sh`.
+Prepare the real ecosystem fixtures separately:
+
+```bash
+uv venv .fastapi-tools/validation-env
+uv pip install --python .fastapi-tools/validation-env/bin/python -r tests/python-ecosystem/requirements.txt -r tests/examples/requirements.txt
+EXAMPLES_PYTHON="$PWD/.fastapi-tools/validation-env/bin/python" bash tests/examples/check.sh
+ECOSYSTEM_PYTHON="$PWD/.fastapi-tools/validation-env/bin/python" bash tests/python-ecosystem/check.sh
+```
+
+The fixture preparation may download dependencies; checks never install them.
 
 Behavioral evaluations require a separate explicit budget and authorization.
 Functional fixtures do not establish measured skill or agent benefit. Record the

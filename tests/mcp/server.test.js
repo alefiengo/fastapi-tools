@@ -8,8 +8,8 @@ const readline = require('node:readline');
 const http = require('node:http');
 const entry = path.resolve(__dirname, '../../mcp-server/index.js');
 
-async function fixture(t, files, env = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-regression-'));
+async function fixture(t, files, env = {}, temporaryBase = os.tmpdir()) {
+  const root = await fs.mkdtemp(path.join(temporaryBase, 'mcp-regression-'));
   for (const [name, content] of Object.entries(files)) {
     const file = path.join(root, name);
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -23,6 +23,7 @@ async function fixture(t, files, env = {}) {
     const data = JSON.parse(line);
     if (pending.has(data.id)) { pending.get(data.id)(data); pending.delete(data.id); }
   });
+  child.on('error', error => { for (const resolve of pending.values()) resolve({ error: { message: error.message } }); });
   child.on('exit', () => { for (const resolve of pending.values()) resolve({ error: { message: stderr || 'Server exited' } }); });
   const request = (method, params) => new Promise((resolve, reject) => {
     const id = ++serial;
@@ -43,7 +44,7 @@ async function fixture(t, files, env = {}) {
   return { root, request, cancel, call: (name, args = {}) => request('tools/call', { name, arguments: args }), child };
 }
 const value = result => JSON.parse(result.content[0].text);
-const project = '[project]\nname="demo"\ndependencies=["fastapi"]\n';
+const project = '[project]\nname="demo"\ndependencies=["fastapi", "pytest"]\n';
 const fakePython = spawnSync('python3', ['-c', "import runpy; print(runpy.run_path('tests/project-runtime/regressions.py')['FAKE_PYTHON'], end='')"], { cwd: path.resolve(__dirname, '../..'), encoding: 'utf8' }).stdout;
 const files = extra => ({ 'pyproject.toml': project, '.venv/bin/python': fakePython, ...extra });
 
@@ -54,16 +55,16 @@ async function listener(t, handler) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
-test('real stdio registers six FastAPI tools', async t => {
+test('real stdio registers seven FastAPI tools', async t => {
   const client = await fixture(t, files());
-  assert.deepEqual((await client.request('tools/list', {})).tools.map(t => t.name).sort(), ['analyze_project','app_health','check_migrations','openapi_endpoints','run_build','run_tests']);
+  assert.deepEqual((await client.request('tools/list', {})).tools.map(t => t.name).sort(), ['analyze_project','app_health','check_migrations','initialize_project','openapi_endpoints','run_build','run_tests']);
 });
 
 test('analyze_project declares dependencies and routes without executing app', async t => {
   const client = await fixture(t, files({ 'app/main.py': 'from fastapi import FastAPI\napp=FastAPI()\n@app.get("/items")\ndef read(): pass\nraise RuntimeError("never import")\n' }));
   const data = value(await client.call('analyze_project'));
   assert.equal(data.isFastAPI, true);
-  assert.deepEqual(data.dependencies, ['fastapi']);
+  assert.deepEqual(data.dependencies, ['fastapi', 'pytest']);
   assert.equal(data.endpoints.endpoints[0].path, '/items');
 });
 
@@ -161,4 +162,90 @@ test('process output limits and cancellation terminate subprocesses', async () =
   const controller = new AbortController();
   const pending = run(process.execPath, ['-e', 'setTimeout(()=>{},10000)'], { signal: controller.signal });
   controller.abort(); assert.match((await pending).error, /Cancelled/);
+});
+
+test('verify skips pytest, Ruff and mypy when the project has no declaration or configuration', async t => {
+  const client = await fixture(t, { 'pyproject.toml': '[project]\nname="api"\ndependencies=["fastapi"]\n', 'main.py': 'value=1\n' });
+  const response = await client.call('run_build', { task: 'verify' });
+  assert.equal(response.isError, undefined);
+  assert.deepEqual(value(response).checks, []);
+  assert.equal(value(response).stdout.trim(), 'Python syntax check passed');
+  assert.equal(await fs.stat(path.join(client.root, '.fastapi-tools')).catch(() => null), null);
+  assert.match(value(await client.call('run_tests')).error, /not declared or configured/);
+});
+
+test('initialize_project requires explicit intent and creates a new project through runtime', async t => {
+  // Scaffold targets must have no protected workspace ancestors.
+  const client = await fixture(t, {}, {}, process.env.TMPDIR || '/var/tmp');
+  const tool = (await client.request('tools/list', {})).tools.find(tool => tool.name === 'initialize_project');
+  assert.equal(tool.annotations.readOnlyHint, false);
+  assert.equal(tool.annotations.destructiveHint, false);
+  const destination = path.join(await fs.realpath(client.root), 'api');
+  const args = { destination, projectName: 'demo-api' };
+  for (const explicitRequest of [undefined, false, 'true']) {
+    assert.equal((await client.call('initialize_project', { ...args, explicitRequest })).isError, true);
+  }
+  assert.deepEqual(await fs.readdir(client.root), []);
+  const response = await client.call('initialize_project', { ...args, explicitRequest: true });
+  assert.equal(response.isError, undefined, response.content[0].text);
+  const data = value(response);
+  assert.equal(data.destination, destination);
+  assert.equal(data.codeExecuted, false);
+  assert.equal(data.dependenciesInstalled, false);
+  assert.ok(data.files.includes('app/main.py'));
+  assert.equal((await client.call('initialize_project', { ...args, explicitRequest: true })).isError, true);
+  assert.deepEqual(await fs.readdir(client.root), ['api']);
+});
+
+test('runtime preserves output when pytest produces an unsafe report', async t => {
+  const python = fakePython.replace("print('controlled check passed')", "(state / 'pytest.xml').unlink(); (state / 'pytest.xml').symlink_to('/unavailable')\nprint('retained stderr', file=sys.stderr)\nsys.exit(9)");
+  const client = await fixture(t, files({ '.venv/bin/python': python }));
+  const response = await client.call('run_tests');
+  assert.equal(response.isError, true);
+  const data = value(response);
+  assert.equal(data.exitCode, 9);
+  assert.match(data.stderr, /retained stderr/);
+  assert.match(data.reportErrors[0], /Unsafe test report/);
+});
+
+test('pre-cancelled process requests produce no side effects', async t => {
+  const { run } = await import(entry);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-cancelled-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const controller = new AbortController(); controller.abort();
+  const response = await run(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.argv[1], "unexpected")', path.join(root, 'executed')], { signal: controller.signal });
+  assert.equal(response.error, 'Cancelled');
+  assert.deepEqual(await fs.readdir(root), []);
+});
+
+const pythonExecutable = spawnSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' }).stdout.trim();
+async function waitFor(predicate, message, milliseconds = 5000) {
+  const deadline = Date.now() + milliseconds;
+  while (!await predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+}
+const running = pid => {
+  const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).stdout.trim();
+  return state && !state.startsWith('Z');
+};
+
+test('schema-less analyze_project cancellation kills a descendant ignoring SIGTERM', async t => {
+  const shim = `#!${pythonExecutable}
+import pathlib, subprocess, sys, time
+root = pathlib.Path(__file__).resolve().parents[1]
+child = subprocess.Popen([sys.executable, '-c', 'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print("ready",flush=True); time.sleep(30)'], stdout=subprocess.PIPE)
+child.stdout.readline()
+(root / 'descendant.pid').write_text(str(child.pid))
+time.sleep(30)
+`;
+  const client = await fixture(t, { 'bin/python3': shim }, { PATH: `{{root}}/bin:${process.env.PATH}` });
+  const call = client.call('analyze_project');
+  await waitFor(() => fs.stat(path.join(client.root, 'descendant.pid')).catch(() => false), 'Runtime did not start');
+  const pid = Number(await fs.readFile(path.join(client.root, 'descendant.pid'), 'utf8'));
+  t.after(() => { try { process.kill(pid, 'SIGKILL'); } catch {} });
+  client.cancel(2); // initialize=1; tools/call=2.
+  await call;
+  await waitFor(() => !running(pid), 'Cancelled runtime descendant survived');
 });

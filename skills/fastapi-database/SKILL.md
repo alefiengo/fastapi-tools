@@ -21,3 +21,13 @@ python -m alembic upgrade head
 ```
 
 `check_migrations` defaults to static AST lint without importing env.py or connecting to the database. Explicit status mode runs current; it never applies upgrades. Autogenerate is a proposal and can miss renames and data transformations. Use expand/backfill/contract sequencing for rolling deployments.
+
+`alembic check` is not this plugin's static lint: it executes the configured
+migration environment and compares database schema with metadata using
+autogenerate. It requires the appropriate target authorization and inherits
+autogenerate's detection limits. Empty output is not proof that a backfill,
+rename or rolling deployment is safe. A failed SQLAlchemy flush requires an
+explicit rollback before the same Session can be reused.
+
+References: https://alembic.sqlalchemy.org/en/latest/autogenerate.html and
+https://docs.sqlalchemy.org/en/20/orm/session_basics.html

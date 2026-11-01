@@ -1,29 +1,33 @@
 # FastAPI Tools for Claude Code
 
+[![Release](https://img.shields.io/github/v/release/alefiengo/fastapi-tools)](https://github.com/alefiengo/fastapi-tools/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A Claude Code plugin for developing and reviewing FastAPI applications: 15 skills,
-seven specialist agents, five hooks and six MCP tools. Hooks and MCP share Python
-project discovery, process locks and verification records.
+A Claude Code plugin with 16 skills, seven specialist agents, five hooks and
+seven MCP tools. The Python runtime provides coordinated verification and safe
+local project initialization, with generation separate from installation and execution.
 
 ## Requirements
 
 - Node.js 20.3+ and npm for the MCP server.
-- Python 3.11+ and Bash on a POSIX environment. Linux is the validated platform.
-- The application's compatible Python 3.11+ environment and installed test dependencies.
+- Python 3.11+, Bash and POSIX facilities for the plugin runtime; native Windows is unsupported.
+- The application's compatible Python 3.11+ environment and its declared/configured check tools.
 - uv for projects with uv.lock, Poetry for projects with poetry.lock; otherwise
   .venv/bin/python is preferred, with the runtime interpreter as fallback.
 - Optional Python diagnostics: pyright-langserver on PATH.
 
 Inspect the application's dependency constraints. Guidance covers FastAPI,
 Pydantic, SQLAlchemy/SQLModel and Alembic without prescribing an application version.
+Validation used Linux, Node 24.21.0 and Python 3.12.10/3.12.14. macOS and WSL are
+implementation targets without an executed validation matrix. The prerequisite
+ranges above are not evidence that every Node/Python combination was tested.
 
 ## Install and use
 
 Install from GitHub:
 
 ```bash
-git clone --branch v0.1.0 https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
+git clone --branch v0.2.0 https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
 npm ci --prefix ~/dev/fastapi-tools/mcp-server
 cd /path/to/your/fastapi-project
 claude --plugin-dir ~/dev/fastapi-tools
@@ -55,9 +59,25 @@ claude plugin install fastapi-tools@fastapi-tools-marketplace
 
 Install server dependencies in the installed plugin's mcp-server directory.
 Try: "Inspect this FastAPI project, run its tests and summarize failures."
-Use `/fastapi-tools:fastapi-pr-review` for a focused review. app_port defaults to 8000 and
-sets the default MCP HTTP inspection port. The plugin registers its server,
+Use `/fastapi-tools:fastapi-pr-review` in Claude Code for a focused review.
+Plugin skills use the [plugin namespace](https://code.claude.com/docs/en/plugins).
+app_port defaults to 8000 and sets the default MCP HTTP inspection port.
+The plugin registers its server,
 hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
+
+## Safe project initialization
+
+Explicitly ask to create a new FastAPI project at an absolute, absent destination.
+`initialize_project` requires `destination`, `projectName` and `explicitRequest: true`.
+The existing parent must be outside an existing Python project or workspace.
+Existing files, empty directories, dangling symlinks, symlink ancestors and nested
+projects are refused. Private sibling staging is removed on handled failures and
+cancellation; abrupt termination can leave a private staging directory. Exclusive
+OS publication prevents replacement of a destination created during generation.
+No network, dependency installation, application imports, Git initialization or
+server execution is performed. Review the generated README before explicitly
+installing dependencies or running tests. The flag represents caller authorization;
+it cannot independently prove what a user requested.
 
 ## Skills
 
@@ -68,6 +88,7 @@ hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
 - `fastapi-contract-testing`
 - `fastapi-database`
 - `fastapi-docker`
+- `fastapi-initializer`
 - `fastapi-load-testing`
 - `fastapi-modular-architecture`
 - `fastapi-observability`
@@ -80,7 +101,7 @@ hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
 Skill descriptions guide host/model selection; activation and response quality
 have not been measured. PR review is explicitly invoked. The Pydantic migration
 skill instructs the caller to inspect installed versions before changing models,
-settings or serialization.
+settings or serialization; the skill itself is not an executable version check.
 
 ## Agents
 
@@ -94,13 +115,15 @@ settings or serialization.
 
 Claude reviewer definitions allow Read, Glob and Grep only. Architect/API designer
 instructions scope their output to design or contract documents; test-writer
-instructions scope it to tests and fixtures. These scopes are instructions, not
-filesystem isolation. The caller owns execution and provides verification evidence.
+instructions scope it to tests and fixtures. These writing scopes are instructions,
+not filesystem isolation. The caller owns execution and provides verification
+evidence. Review selects only roles relevant to the change.
 
 ## MCP tools
 
 | Tool | Behavior |
 |---|---|
+| initialize_project | Generate a minimal project at an absent, explicitly requested destination |
 | analyze_project | Nearest Python project, declared dependencies, environment and AST routes |
 | run_build | compile, lint, typecheck, package, dependencies or verify/check |
 | run_tests | pytest, optional relative testPath, fresh JUnit summaries |
@@ -109,12 +132,15 @@ filesystem isolation. The caller owns execution and provides verification eviden
 | app_health | Selected health/readiness/liveness routes with configurable paths |
 
 `compile` checks Python syntax without importing application modules. `lint` uses Ruff;
-`typecheck` uses mypy. `verify` runs syntax, Ruff/mypy when declared in pyproject
-or requirements, then the full pytest suite. `package` uses build --no-isolation.
+`typecheck` uses mypy. `verify` runs syntax and Ruff, mypy or pytest when declared or configured
+(including standalone configuration files). `package` uses build --no-isolation.
 Missing dependencies and pytest's no-tests exit code are failures. Tools do not
 install dependencies: uv uses --frozen --offline --no-sync. Synchronize the project
 environment explicitly before running checks. Test selectors must remain inside
-the project. Workspace/module aggregation is outside static discovery.
+the project. Workspace/module aggregation is outside static discovery. Explicit lint/typecheck/test
+requests require a declaration or configuration and fail if the tool is unavailable. A project
+without pytest runs syntax and its configured checks; a configured pytest suite
+with no collected tests retains pytest’s failure status.
 
 Static analysis never imports application modules or Alembic env.py. Dependencies
 are declarations, not a resolved graph; includes in requirements files and dynamic
@@ -139,7 +165,10 @@ explicit baseUrl, fetches no external schema references and forwards no credenti
 | verify-on-stop | Stop | Run or reuse equivalent successful full verification |
 
 Build hooks activate only for projects with a FastAPI declaration or import.
-Markdown/reST/AsciiDoc files are excluded from fingerprints in this version. Checks serialize per project;
+After metadata errors, Stop blocks when static FastAPI import evidence remains;
+otherwise it reports a diagnostic without establishing framework identity.
+Files ending in .md, .rst or .adoc outside src are excluded from fingerprints;
+those under src remain build inputs. Checks serialize per project;
 reuse requires matching task, test scope, environment and file contents. Failed,
 cancelled or targeted test runs cannot satisfy the full gate. Force a rerun with
 `run_build` force:true (CLI reuse:false). Generated state stays in private temporary
@@ -147,19 +176,40 @@ directories; pytest reports are written to the target project's .fastapi-tools/.
 
 Guards cover common scalar settings and direct Python assignments/calls. They are
 review aids, not complete secret scanners or an enforcement boundary. Malformed
-hook input or missing Python produces a diagnostic. Keep independent CI checks.
+hook input or missing Python produces a diagnostic. Keep independent checks in
+the application's CI.
 
 ## Development
 
 ```bash
+npm ci --prefix mcp-server
 node --check mcp-server/index.js
-TMPDIR=/var/tmp bash tests/run-all.sh
-# Install example-only dependencies, then exercise a real FastAPI lifecycle:
+# Choose an existing writable temporary base outside any project/workspace.
+# /var/tmp was used on the validated Linux host; /tmp contains a project marker there.
+export TMPDIR=/var/tmp
+bash tests/run-all.sh
+# Prepare example dependencies in a local environment, then exercise FastAPI:
 python3 -m venv .fastapi-tools/example-env
 .fastapi-tools/example-env/bin/python -m pip install -r tests/examples/requirements.txt
 EXAMPLES_PYTHON="$PWD/.fastapi-tools/example-env/bin/python" bash tests/examples/check.sh
 ```
 
+Real tool integration uses separately prepared dependencies and exercises venv,
+uv, Poetry, pytest, Ruff, mypy and Alembic. See [validation and limits](docs/validation.md).
+No measured skill or agent benefit is claimed; the [evidence inventory](docs/component-evidence.json)
+and [offline evaluation methodology](docs/evaluation-methodology.md) distinguish
+functional coverage from behavioral outcomes. GitHub Actions and automatic
+Dependabot updates are disabled for this repository; application CI templates
+remain available in `fastapi-ci`.
+
+## Upgrade and release
+
+Update the checkout to the exact release tag, run `npm ci --prefix mcp-server`,
+and restart the host. Marketplace users must update their installed
+bundle and install MCP dependencies there; updating a source checkout does not
+refresh a host cache. See [CHANGELOG.md](CHANGELOG.md) for features and compatibility changes
+and the [release procedure](docs/releases.md).
+
 See [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md),
-[validation](docs/validation.md) and [SECURITY.md](SECURITY.md).
+[behavioral evaluations](evals/README.md) and [SECURITY.md](SECURITY.md).
 Licensed under the [MIT license](LICENSE).

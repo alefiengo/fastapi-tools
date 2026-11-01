@@ -1,4 +1,4 @@
-# Validation for FastAPI Tools 0.1.0
+# Validation for FastAPI Tools 0.2.0
 
 Release validation is performed on the snapshot identified by its annotated tag.
 The attached GitHub release report records the exact commit, executed commands,
@@ -21,11 +21,18 @@ public-directory icon warning does not invalidate local strict validation.
 
 ## Executed checks
 
-- Nine deterministic suites passed.
-- Four executable FastAPI lifecycle examples passed.
+- 10 deterministic suites passed.
+- Ten executable FastAPI/Pydantic/SQLAlchemy/Alembic examples passed.
+- Four real ecosystem scenarios passed: generated project, Python/venv, uv and Poetry.
 - Node/Python syntax checks and strict Claude plugin/skills/agents validation passed.
 - Production npm audit reported zero vulnerabilities for the locked dependencies.
 
-Environment: Linux x86_64, Node 24.21.0, Python runtime 3.12.10 and example
-Python 3.12.14. Results apply to this snapshot; optional Python LSP integration
-and model selection/response quality were not evaluated.
+Environment: Linux x86_64, Node 24.21.0, runtime Python 3.12.10, fixture Python
+3.12.14, uv 0.13.0, Poetry 2.5.1, FastAPI 0.162.0, Pydantic 2.14.2, pytest
+9.2.0, Ruff 0.17.3, mypy 2.4.1, SQLAlchemy 2.0.55 and Alembic 1.20.1.
+
+The ecosystem fixtures use valid empty locks and previously installed tools
+exposed to private environments. They do not test remote dependency resolution or
+complete application lock fidelity. SQLite checks do not establish PostgreSQL
+behavior. Host protocol and installation smokes do not measure model selection
+or response quality. No paid behavioral evaluations were run.

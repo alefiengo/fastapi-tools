@@ -24,6 +24,13 @@ This example requires an implemented /health endpoint. Restore app.dependency_ov
 
 A rollback test must fail after an initial write using a real database constraint, then query through a fresh independent transaction. Mock-based tests cannot establish SQL rollback or locking. Test PostgreSQL behavior on PostgreSQL where those semantics matter. Assert the complete established error envelope; do not invent an absent HTTP adapter.
 
+For SQLAlchemy, flush the first write before inducing the second failure; pending
+objects alone do not establish a persisted write was rolled back. If a fixture
+wraps tests in an outer transaction/SAVEPOINT, check that its cleanup cannot mask
+a missing application rollback. A Session that failed during flush needs rollback
+before reuse. Keep a separate AsyncSession per concurrent task, and explicitly
+load relationships needed by Pydantic `from_attributes` serialization.
+
 Run `run_tests` for fresh JUnit evidence and preserve failures. Use `testPath` for focused tests, then the full gate as appropriate.
 
 Reference: https://fastapi.tiangolo.com/advanced/async-tests/
