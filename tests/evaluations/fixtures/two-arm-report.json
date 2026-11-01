@@ -1,0 +1,26 @@
+{
+  "fixtureKind": "synthetic-harness-regression-NOT-model-evidence",
+  "claudeVersion": "synthetic-host-1",
+  "modelRequested": "synthetic-generator-1",
+  "effort": "high",
+  "executionLimits": {"timeoutSeconds": 30, "maxTurns": 3},
+  "cases": [{
+    "name": "rollback",
+    "promptMarkdown": "Explain how to verify rollback.",
+    "arms": {
+      "with": [{
+        "response": "Flush the first write, induce a constraint failure, then observe through an independent session.",
+        "model": "synthetic-generator-1",
+        "usage": {"input_tokens": 120, "output_tokens": 25},
+        "total_cost_usd": 0.0,
+        "duration_ms": 10,
+        "graders": [{"name": "activation", "scored": true, "passed": true}]
+      }],
+      "without": [{
+        "response": "A mock says rollback was called.",
+        "model": "synthetic-generator-1",
+        "graders": []
+      }]
+    }
+  }]
+}

@@ -78,6 +78,40 @@ class FrozenJudgeTests(unittest.TestCase):
             judge.judge(bundle, 'model')
         call.assert_not_called()
 
+    def test_judge_is_blind_to_arm_and_uses_explicit_budget(self):
+        calls = []
+        def run(command, **kwargs):
+            self.assertTrue(Path(kwargs['cwd']).is_dir())
+            self.assertEqual(list(Path(kwargs['cwd']).iterdir()), [])
+            calls.append((command, kwargs['input']))
+            result = {'structured_output': {'judgments': [{'id': 'rollback', 'passed': False,
+                       'reason': 'Synthetic verdict', 'evidenceLine': 0}]}}
+            return type('Process', (), {'returncode': 0, 'stdout': json.dumps(result)})()
+        for variant in ('baseline', 'full'):
+            bundle = {k: v for k, v in self.bundle().items() if k != 'inputSha256'}
+            bundle.update(variant=variant, provenance={'secretGraderScores': [1, 0]},
+                          generation={'metrics': {'costUSD': 99}})
+            with patch.object(judge.subprocess, 'run', side_effect=run):
+                judge.judge(judge.seal(bundle), 'model', max_budget_usd=0.5)
+        self.assertEqual(calls[0][1], calls[1][1])
+        self.assertNotIn('secretGraderScores', calls[0][1])
+        self.assertNotIn('costUSD', calls[0][1])
+        self.assertEqual(calls[0][0][-2:], ['--max-budget-usd', '0.5'])
+
+    def test_paid_cli_requires_authorization_and_budget_before_external_call(self):
+        import sys
+        with tempfile.TemporaryDirectory() as directory:
+            arguments = ['frozen_judge.py', 'judge', str(Path(directory) / 'missing.json'),
+                         str(Path(directory) / 'result.json'), '--models', 'model']
+            for extra in ([], ['--authorize-paid'], ['--max-budget-usd', '1'],
+                          ['--authorize-paid', '--max-budget-usd', 'nan']):
+                with self.subTest(extra=extra), patch.object(sys, 'argv', arguments + extra), \
+                        patch.object(judge.subprocess, 'run') as call, \
+                        patch('sys.stderr'), self.assertRaises(SystemExit) as error:
+                    judge.main()
+                self.assertEqual(error.exception.code, 2)
+                call.assert_not_called()
+
     def test_changed_prompt_cannot_rejudge_old_generation(self):
         with tempfile.TemporaryDirectory() as directory:
             case = Path(directory) / 'case'

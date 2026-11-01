@@ -24,7 +24,10 @@ def notice(message):
 
 
 def read_input():
-    raw = sys.stdin.read()
+    raw = sys.stdin.read(2 * 1024 * 1024 + 1)
+    if len(raw) > 2 * 1024 * 1024:
+        notice('FastAPI hook skipped: input exceeds 2 MiB limit.')
+        return None
     if not raw.strip():
         return {}
     try:
@@ -44,8 +47,8 @@ def proposed(data, path):
     if 'new_string' in args:
         old, new = args.get('old_string', ''), args['new_string']
         try:
-            text = path.read_text()
-        except OSError:
+            text = read_regular(path).decode('utf-8')
+        except (OSError, ValueError):
             # At least inspect the replacement if the old file cannot be read.
             return new
         if not old:
@@ -57,7 +60,7 @@ def proposed(data, path):
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'runtime'))
-from project_runtime import discover, mark_pending, run_build, relevant, BuildCancelled
+from project_runtime import discover, mark_pending, run_build, relevant, BuildCancelled, DiscoveryError, read_regular
 
 
 
@@ -199,7 +202,12 @@ def build(event, data, path):
     location = path if event == 'PostToolUse' else Path(os.environ.get('CLAUDE_PROJECT_DIR') or data.get('cwd') or os.getcwd())
     try:
         info = discover(location)
-    except ValueError:
+    except ValueError as error:
+        if not str(error).startswith('No Python project found'):
+            if event == 'Stop' and isinstance(error, DiscoveryError) and error.is_fastapi:
+                emit(event, f'FastAPI verification could not discover the project: {error}')
+            else:
+                notice(f'FastAPI discovery failed: {error}')
         return
     if not info.get('isFastAPI'):
         return
@@ -212,14 +220,18 @@ def build(event, data, path):
     try:
         result = run_build({'projectRoot': info['root'], 'task': 'verify'}, own_process_group=True)
     except (OSError, ValueError, TimeoutError, BuildCancelled) as error:
-        notice(str(error))
+        emit(event, f'FastAPI verification could not complete: {error}')
         return
-    if not result['ok']:
+    if result.get('verificationIncomplete'):
+        emit(event, 'Final build inputs could not be fully inspected: ' + str(result.get('cacheDiagnostic')))
+    elif not result['ok']:
         detail = 'timed out' if result['timedOut'] else ('exceeded output limit' if result['outputLimitExceeded'] else f"exit {result['exitCode']}")
         output = result['stdout'] + result['stderr']
         emit(event, f"Build check failed: {result['tasks'][0]} ({detail}) in {info['root']}.\n" + '\n'.join(output.splitlines()[:40]))
     elif result.get('inputsChanged'):
         emit(event, 'Build inputs changed during verification. Run verification again on the final source contents.')
+    elif not result.get('cacheable', True):
+        emit(event, 'Final build inputs could not be fully inspected: ' + str(result.get('cacheDiagnostic')))
 
 
 def lint(data, path):

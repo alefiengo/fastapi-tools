@@ -5,6 +5,7 @@ CLI accepts a JSON object on stdin and returns JSON on stdout. Build subprocesse
 inherit the CLI process group so an MCP cancellation terminates the whole group.
 """
 import ast
+import configparser
 import fcntl
 import hashlib
 import json
@@ -25,6 +26,12 @@ class BuildCancelled(RuntimeError):
     pass
 
 
+class DiscoveryError(ValueError):
+    def __init__(self, message, is_fastapi=False):
+        super().__init__(message)
+        self.is_fastapi = is_fastapi
+
+
 BUILD_FILES = ('pyproject.toml', 'requirements.txt', 'setup.cfg', 'setup.py')
 INVOCATION_ENV = {'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_SESSION_ID', 'CODEX_THREAD_ID', 'MCP_SERVER_NAME', 'PROJECT_ROOT', 'PWD', 'OLDPWD', 'SHLVL', '_'}
 IGNORED = {'.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '__pycache__', '.idea', '.vscode', '.pytest_cache', '.ruff_cache', '.mypy_cache', '.fastapi-tools', 'htmlcov'}
@@ -35,41 +42,101 @@ def build_file(folder):
     return next((name for name in BUILD_FILES if (folder / name).is_file()), None)
 
 
+def read_regular(path, limit=8 * 1024 * 1024):
+    """Bound static reads, reject symlinks/FIFOs/devices without blocking."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as source:
+        metadata = os.fstat(source.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+            raise ValueError(f'Unsafe or oversized input: {path}')
+        content = source.read(limit + 1)
+        if len(content) > limit:
+            raise ValueError(f'Input exceeds safety limit: {path}')
+        return content
+
+
 def source_files(root):
-    for folder, directories, filenames in os.walk(root, followlinks=False):
+    count, total = 0, 0
+    def walk_error(error):
+        raise error
+    for folder, directories, filenames in os.walk(root, followlinks=False, onerror=walk_error):
         directories[:] = sorted(d for d in directories if not ignored_directory(Path(folder) / d, root) and not (Path(folder) / d).is_symlink())
         for name in sorted(filenames):
             file = Path(folder) / name
             if file.suffix == '.py' and not file.is_symlink():
+                metadata = file.stat()
+                count += 1
+                total += metadata.st_size
+                if not stat.S_ISREG(metadata.st_mode) or count > 50000 or total > 128 * 1024 * 1024:
+                    raise ValueError('Python source inventory exceeds safety limit or contains nonregular files')
                 yield file
+
+
+def ini_config(file):
+    parser = configparser.ConfigParser(interpolation=None)
+    if file.exists() or file.is_symlink():
+        try:
+            parser.read_string(read_regular(file).decode('utf-8'))
+        except configparser.Error as error:
+            raise ValueError(f'Invalid INI configuration: {file}: {error}') from error
+    return parser
 
 
 def project_metadata(root):
     config = root / 'pyproject.toml'
-    data = tomllib.loads(config.read_text()) if config.is_file() else {}
-    project, tools = data.get('project', {}), data.get('tool', {})
-    dependencies = list(project.get('dependencies', []))
-    for group in project.get('optional-dependencies', {}).values():
-        dependencies.extend(group)
-    for group in data.get('dependency-groups', {}).values():
-        dependencies.extend(item for item in group if isinstance(item, str))
-    poetry = tools.get('poetry', {})
-    for name, version in poetry.get('dependencies', {}).items():
-        dependencies.append(f'{name} {version}')
-    for group in poetry.get('group', {}).values():
-        dependencies.extend(f'{name} {version}' for name, version in group.get('dependencies', {}).items())
-    for file in sorted(root.glob('requirements*.txt')):
-        dependencies.extend(line.strip() for line in file.read_text().splitlines() if line.strip() and not line.lstrip().startswith(('#', '-')))
-    # Metadata only: never import application code during discovery.
-    fastapi = any(re.match(r'(?i)^fastapi(?:\b|\[)', dep) for dep in dependencies)
-    if not fastapi:
-        for file in source_files(root):
-            if re.search(r'(?m)^\s*(?:from\s+fastapi\b|import\s+fastapi\b)', file.read_text(errors='replace')):
-                fastapi = True
-                break
-    return {'name': project.get('name') or poetry.get('name'), 'requiresPython': project.get('requires-python'),
-            'dependencies': dependencies, 'isFastAPI': fastapi,
-            'checks': [name for name in ('ruff', 'mypy') if name in tools or any(re.match(r'(?i)^' + name + r'\b', dep) for dep in dependencies)]}
+    data = tomllib.loads(read_regular(config).decode('utf-8')) if config.exists() or config.is_symlink() else {}
+    try:
+        project, tools = data.get('project', {}), data.get('tool', {})
+        dependencies = list(project.get('dependencies', []))
+        for group in project.get('optional-dependencies', {}).values():
+            dependencies.extend(group)
+        for group in data.get('dependency-groups', {}).values():
+            dependencies.extend(item for item in group if isinstance(item, str))
+        poetry = tools.get('poetry', {})
+        for name, version in poetry.get('dependencies', {}).items():
+            dependencies.append(f'{name} {version}')
+        for name, version in poetry.get('dev-dependencies', {}).items():
+            dependencies.append(f'{name} {version}')
+        for group in poetry.get('group', {}).values():
+            dependencies.extend(f'{name} {version}' for name, version in group.get('dependencies', {}).items())
+        setup = ini_config(root / 'setup.cfg')
+        dependencies.extend(setup.get('options', 'install_requires', fallback='').splitlines())
+        if setup.has_section('options.extras_require'):
+            for value in setup['options.extras_require'].values():
+                dependencies.extend(value.splitlines())
+        for file in sorted(root.glob('requirements*.txt')):
+            dependencies.extend(line.strip() for line in read_regular(file).decode('utf-8').splitlines() if line.strip() and not line.lstrip().startswith(('#', '-')))
+        dependencies = [dep.strip() for dep in dependencies if dep.strip()]
+        names = set()
+        for dep in dependencies:
+            match = re.match(r'([A-Za-z0-9][A-Za-z0-9._-]*)', dep)
+            if match:
+                names.add(re.sub(r'[-_.]+', '-', match[1]).lower())
+        checks = {name for name in ('ruff', 'mypy', 'pytest') if name in tools or name in names}
+        if any((root / name).exists() or (root / name).is_symlink() for name in ('ruff.toml', '.ruff.toml')):
+            checks.add('ruff')
+        if any((root / name).exists() or (root / name).is_symlink() for name in ('mypy.ini', '.mypy.ini')) or setup.has_section('mypy'):
+            checks.add('mypy')
+        if (any((root / name).exists() or (root / name).is_symlink() for name in ('pytest.ini', '.pytest.ini', 'pytest.toml', '.pytest.toml'))
+                or setup.has_section('tool:pytest') or ini_config(root / 'tox.ini').has_section('pytest')):
+            checks.add('pytest')
+        fastapi = 'fastapi' in names
+        if not fastapi:
+            fastapi = fastapi_import_evidence(root)
+        return {'name': project.get('name') or poetry.get('name') or setup.get('metadata', 'name', fallback=None),
+                'requiresPython': project.get('requires-python') or setup.get('options', 'python_requires', fallback=None),
+                'dependencies': dependencies, 'isFastAPI': fastapi, 'checks': sorted(checks)}
+    except (AttributeError, TypeError) as error:
+        raise ValueError('Invalid static Python dependency declarations') from error
+
+
+def fastapi_import_evidence(root):
+    """Fallback evidence when metadata cannot be parsed; never import the app."""
+    for file in source_files(root):
+        if re.search(r'(?m)^\s*(?:from\s+fastapi\b|import\s+fastapi\b)',
+                     read_regular(file).decode('utf-8', 'replace')):
+            return True
+    return False
 
 
 def discover(location):
@@ -78,7 +145,17 @@ def discover(location):
     root = next((p for p in (folder, *folder.parents) if build_file(p)), None)
     if root is None:
         raise ValueError(f'No Python project found from {location}; expected pyproject.toml or requirements.txt')
-    metadata = project_metadata(root)
+    try:
+        metadata = project_metadata(root)
+    except (OSError, ValueError, TypeError) as error:
+        try:
+            evidence = fastapi_import_evidence(root)
+        except (OSError, ValueError):
+            evidence = False
+        raise DiscoveryError(str(error), is_fastapi=evidence) from error
+    if (root / 'uv.lock').is_file() and (root / 'poetry.lock').is_file():
+        raise DiscoveryError('Ambiguous Python managers: both uv.lock and poetry.lock exist; select one explicitly in the project',
+                             is_fastapi=metadata['isFastAPI'])
     tool = 'uv' if (root / 'uv.lock').is_file() else ('poetry' if (root / 'poetry.lock').is_file() else 'python')
     python = root / '.venv' / 'bin' / 'python'
     return dict(metadata, root=str(root), buildTool=tool, buildFile=build_file(root),
@@ -98,7 +175,7 @@ def python_command(info):
 
 def build_plan(request):
     info = discover(request.get('projectRoot') or os.getcwd())
-    tasks = request.get('tasks') or [request.get('task', 'compile')]
+    tasks = request.get('tasks', [request.get('task', 'compile')])
     if not isinstance(tasks, list) or len(tasks) != 1 or not isinstance(tasks[0], str):
         raise ValueError('Exactly one task is required; verify combines all configured checks')
     task = 'verify' if tasks[0] == 'check' else tasks[0]
@@ -113,6 +190,9 @@ def build_plan(request):
         file = (Path(info['root']) / selection.split('::')[0]).resolve()
         if not file.is_relative_to(Path(info['root'])) or not file.exists() or selection.startswith('-') or Path(selection.split('::')[0]).is_absolute():
             raise ValueError('testPath must exist inside the project root')
+    required = {'lint': 'ruff', 'typecheck': 'mypy', 'test': 'pytest'}.get(task)
+    if required and required not in info['checks']:
+        raise ValueError(f'{required} is not declared or configured in this project')
     runner = python_command(info)
     runtime = str(Path(__file__).resolve())
     compile_command = [*runner, runtime, '--syntax', info['root']]
@@ -125,7 +205,8 @@ def build_plan(request):
             commands.append(lint_command)
         if 'mypy' in info['checks']:
             commands.append(type_command)
-        commands.append(tests)
+        if 'pytest' in info['checks']:
+            commands.append(tests)
         command = [sys.executable, runtime, '--checks', json.dumps(commands)]
     else:
         command = {'compile': compile_command, 'lint': lint_command, 'typecheck': type_command, 'test': tests,
@@ -149,7 +230,7 @@ def relevant(path, root):
         return False
     # Build scripts can read arbitrary configuration names, binary fixtures,
     # extensionless inputs and data under docs. Exempt only pure prose outside src.
-    return path.suffix.lower() not in ('.md', '.rst', '.adoc')
+    return 'src' in relative.parts or path.suffix.lower() not in ('.md', '.rst', '.adoc')
 
 
 def fingerprint(root):
@@ -176,8 +257,7 @@ def fingerprint(root):
                 raise ValueError(f'Cannot fingerprint nonregular build input: {path}')
             if metadata.st_size + total > 128 * 1024 * 1024:
                 raise ValueError('Build input fingerprint exceeds safety limit; verification will run without reuse')
-            with path.open('rb') as source:
-                content = source.read(128 * 1024 * 1024 - total + 1)
+            content = read_regular(path, 128 * 1024 * 1024 - total)
             digest.update((metadata.st_mode & 0o777).to_bytes(8, 'big'))
             total += len(content)
             count += 1
@@ -208,12 +288,14 @@ def state_dir(root):
 
 def state_read(folder):
     path = folder / 'state.json'
-    if path.is_symlink():
-        raise ValueError('Unsafe build state file')
     try:
-        value = json.loads(path.read_text())
+        content = read_regular(path, 1024 * 1024)
+    except FileNotFoundError:
+        return {}
+    try:
+        value = json.loads(content)
         return value if isinstance(value, dict) else {}
-    except (FileNotFoundError, ValueError):
+    except ValueError:
         return {}
 
 
@@ -231,6 +313,11 @@ def state_write(folder, data):
 def acquire(folder, deadline):
     lock = folder / 'build.lock'
     handle = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    metadata = os.fstat(handle)
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+            or metadata.st_uid != os.getuid() or metadata.st_mode & 0o077):
+        os.close(handle)
+        raise ValueError('Unsafe build lock file')
     stream = os.fdopen(handle, 'a')
     try:
         while True:
@@ -282,14 +369,12 @@ def test_report_snapshot(root):
     file = Path(root) / '.fastapi-tools' / 'pytest.xml'
     if file.parent.is_symlink() or file.is_symlink():
         raise ValueError('Unsafe test report path')
-    if not file.is_file():
+    if not file.exists():
         return {}
     metadata = file.stat()
-    if metadata.st_size > 8 * 1024 * 1024:
-        raise ValueError('Test report exceeds 8 MiB limit')
-    content = file.read_bytes()
-    if len(content) > 8 * 1024 * 1024:
-        raise ValueError('Test report exceeds 8 MiB limit')
+    if metadata.st_nlink != 1:
+        raise ValueError('Unsafe test report hardlink')
+    content = read_regular(file)
     return {str(file): ((metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_size), content.decode('utf-8', 'replace'))}
 
 
@@ -309,11 +394,16 @@ def run_build(request, own_process_group=False):
         if collect_reports and plan['tasks'] != ['test']:
             raise ValueError('collectTestReports requires only the test task')
         reports_before = test_report_snapshot(plan['root']) if collect_reports else {}
-        if plan['tasks'] in (['test'], ['verify']):
+        if plan['tasks'] == ['test'] or plan['tasks'] == ['verify'] and 'pytest' in plan['checks']:
             report_dir = Path(plan['root']) / '.fastapi-tools'
             if report_dir.is_symlink() or (report_dir / 'pytest.xml').is_symlink():
                 raise ValueError('Unsafe test report path')
             report_dir.mkdir(exist_ok=True)
+            report_file = report_dir / 'pytest.xml'
+            if report_file.exists():
+                metadata = report_file.lstat()
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    raise ValueError('Unsafe test report path')
         cache_diagnostic = None
         try:
             before = fingerprint(plan['root'])
@@ -332,20 +422,33 @@ def run_build(request, own_process_group=False):
         state.pop('verifiedScopes', None)
         state.pop('verifiedFingerprint', None)
         state_write(folder, state)
-        process = subprocess.Popen(plan['command'], cwd=plan['root'], stdin=subprocess.DEVNULL,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=own_process_group)
-        selector = selectors.DefaultSelector()
+        process, selector = None, None
         outputs = {'stdout': bytearray(), 'stderr': bytearray()}
-        for name in outputs:
-            selector.register(getattr(process, name), selectors.EVENT_READ, name)
         timed_out, too_large, used = False, False, 0
         previous_handlers = {}
-        if own_process_group:
-            def interrupted(signum, frame):
-                raise BuildCancelled(f'Build cancelled by signal {signum}')
-            for signum in (signal.SIGTERM, signal.SIGINT):
-                previous_handlers[signum] = signal.signal(signum, interrupted)
+        deferred_signal = []
         try:
+            if own_process_group:
+                # Record cancellation during Popen/pipe setup, when ownership of
+                # the child is not yet available for cleanup. Do not block OS
+                # signals: children must inherit the ordinary signal mask.
+                def defer(signum, frame):
+                    deferred_signal.append(signum)
+                for signum in (signal.SIGTERM, signal.SIGINT):
+                    previous_handlers[signum] = signal.signal(signum, defer)
+            process = subprocess.Popen(plan['command'], cwd=plan['root'], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=own_process_group,
+                                       env=dict(os.environ, POETRY_VIRTUALENVS_CREATE='false'))
+            selector = selectors.DefaultSelector()
+            for name in outputs:
+                selector.register(getattr(process, name), selectors.EVENT_READ, name)
+            if own_process_group:
+                def interrupted(signum, frame):
+                    raise BuildCancelled(f'Build cancelled by signal {signum}')
+                for signum in previous_handlers:
+                    signal.signal(signum, interrupted)
+                if deferred_signal:
+                    raise BuildCancelled(f'Build cancelled by signal {deferred_signal[0]}')
             while selector.get_map():
                 if time.monotonic() >= deadline:
                     timed_out = True
@@ -375,7 +478,8 @@ def run_build(request, own_process_group=False):
                 after = fingerprint(plan['root'])
             except (OSError, ValueError) as error:
                 after, cache_diagnostic = None, str(error)
-            ok = process.returncode == 0 and not timed_out and not too_large
+            verification_incomplete = verification and (before is None or after is None)
+            ok = process.returncode == 0 and not timed_out and not too_large and not verification_incomplete
             if ok and verification and before is not None and before == after:
                 state['verifiedScopes'] = {scope: after}
                 state.pop('pendingFingerprint', None)
@@ -386,22 +490,30 @@ def run_build(request, own_process_group=False):
                     pass
             report_result = {}
             if collect_reports:
-                reports_after = test_report_snapshot(plan['root'])
-                fresh = [{'file': file, 'content': value[1]} for file, value in reports_after.items()
-                         if reports_before.get(file) != value]
-                report_result = {'testReports': fresh, 'staleReportsIgnored': len(reports_after) - len(fresh)}
+                try:
+                    reports_after = test_report_snapshot(plan['root'])
+                    fresh = [{'file': file, 'content': value[1]} for file, value in reports_after.items()
+                             if reports_before.get(file) != value]
+                    report_result = {'testReports': fresh, 'staleReportsIgnored': len(reports_after) - len(fresh)}
+                except (OSError, ValueError) as error:
+                    ok = False
+                    report_result = {'testReports': [], 'testReportErrors': [str(error)]}
             return dict(plan, **report_result, ok=ok, exitCode=process.returncode, **{name: bytes(value).decode('utf-8', 'replace') for name, value in outputs.items()},
-                        reused=False, durationMs=round((time.monotonic() - start) * 1000), fingerprint=before, inputsChanged=before is not None and after is not None and before != after, cacheable=before is not None and after is not None, cacheDiagnostic=cache_diagnostic, timedOut=timed_out, outputLimitExceeded=too_large)
+                        reused=False, verificationIncomplete=verification_incomplete, durationMs=round((time.monotonic() - start) * 1000), fingerprint=before, inputsChanged=before is not None and after is not None and before != after, cacheable=before is not None and after is not None, cacheDiagnostic=cache_diagnostic, timedOut=timed_out, outputLimitExceeded=too_large)
         finally:
-            selector.close()
-            for name in outputs:
-                getattr(process, name).close()
             try:
-                if own_process_group or process.poll() is None:
-                    terminate(process, own_process_group)
+                if selector is not None:
+                    selector.close()
             finally:
-                for signum, handler in previous_handlers.items():
-                    signal.signal(signum, handler)
+                try:
+                    if process is not None:
+                        for name in outputs:
+                            getattr(process, name).close()
+                        if own_process_group or process.poll() is None:
+                            terminate(process, own_process_group)
+                finally:
+                    for signum, handler in previous_handlers.items():
+                        signal.signal(signum, handler)
 
 
 def mark_pending(location):
@@ -442,7 +554,7 @@ def static_endpoints(root):
     for file in source_files(root):
         relative, module = file.relative_to(root).as_posix(), module_name(file, root)
         try:
-            tree = ast.parse(file.read_bytes())
+            tree = ast.parse(read_regular(file))
         except SyntaxError as error:
             warnings.append(f'{relative}:{error.lineno}: {error.msg}')
             continue
@@ -530,7 +642,7 @@ def migration_inventory(root):
     config = root / 'alembic.ini'
     if config.is_file():
         parser = configparser.ConfigParser(interpolation=None)
-        parser.read(config)
+        parser.read_string(read_regular(config).decode('utf-8'))
         values = parser['alembic'] if parser.has_section('alembic') else {}
         script = values.get('script_location', 'alembic').replace('%(here)s', str(root))
         version_locations = values.get('version_locations')
@@ -548,12 +660,14 @@ def migration_inventory(root):
         if not directory.is_relative_to(root):
             warnings.append('Skipped external migration location: ' + location)
             continue
+        if not directory.exists():
+            continue
         files.update(source_files(directory))
     migrations, errors, risks, ids = [], [], [], {}
     for file in sorted(files):
         relative = file.relative_to(root).as_posix()
         try:
-            tree = ast.parse(file.read_bytes())
+            tree = ast.parse(read_regular(file))
         except SyntaxError as error:
             errors.append({'file': relative, 'code': 'syntax', 'message': str(error)})
             continue
@@ -600,7 +714,7 @@ def migration_inventory(root):
                         risks.append({'file': relative, 'line': node.lineno, 'code': 'ddl-risk', 'message': name + ': review data loss, locking and rolling compatibility'})
                     if name.endswith('.execute') and node.args:
                         sql = literal(node.args[0])
-                        if isinstance(sql, str) and re.search(r'(?i)\\b(?:DROP|TRUNCATE|DELETE)\\b', sql):
+                        if isinstance(sql, str) and re.search(r'(?i)\b(?:DROP|TRUNCATE|DELETE)\b', sql):
                             risks.append({'file': relative, 'line': node.lineno, 'code': 'destructive-sql', 'message': 'Review destructive SQL in upgrade()'})
     graph = {entry['revision']: entry['downRevision'] + entry['dependsOn'] for entry in migrations}
     active, visited = set(), set()
@@ -629,17 +743,27 @@ def migration_inventory(root):
 
 
 def main():
+    def interrupted(signum, frame):
+        raise BuildCancelled(f'Runtime cancelled by signal {signum}')
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, interrupted)
     try:
-        request = json.load(sys.stdin)
+        raw = sys.stdin.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise ValueError('Runtime request exceeds 1 MiB limit')
+        request = json.loads(raw)
         if not isinstance(request, dict):
             raise ValueError('Expected JSON object')
         action = request.get('action', 'discover')
         if action == 'discover':
             result = discover(request.get('projectRoot') or os.getcwd())
+        elif action == 'initialize':
+            from project_initializer import initialize_project
+            result = initialize_project(request)
         elif action == 'plan':
             result = build_plan(request)
         elif action == 'run':
-            result = run_build(request)
+            result = run_build(request, own_process_group=True)
         elif action == 'analyze':
             result = discover(request.get('projectRoot') or os.getcwd())
             result['endpoints'] = static_endpoints(Path(result['root']))
@@ -649,8 +773,11 @@ def main():
             result = mark_pending(request.get('projectRoot') or os.getcwd())
         else:
             raise ValueError('Unknown runtime action')
-        print(json.dumps(result))
-    except (OSError, ValueError, TypeError, TimeoutError, BuildCancelled) as error:
+        encoded = json.dumps(result)
+        if len(encoded.encode('utf-8')) > 24 * 1024 * 1024:
+            encoded = json.dumps({'ok': False, 'exitCode': 1, 'error': 'Runtime result exceeds 24 MiB serialized limit; narrow the scope'})
+        print(encoded)
+    except (OSError, ValueError, TypeError, TimeoutError, BuildCancelled, configparser.Error, RecursionError) as error:
         print(json.dumps({'ok': False, 'error': str(error), 'exitCode': 1}))
         sys.exit(1)
 
@@ -658,7 +785,7 @@ def main():
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--syntax':
         for file in source_files(Path(sys.argv[2])):
-            compile(file.read_bytes(), str(file), 'exec')
+            compile(read_regular(file), str(file), 'exec')
         print('Python syntax check passed')
     elif len(sys.argv) > 1 and sys.argv[1] == '--checks':
         for command in json.loads(sys.argv[2]):
