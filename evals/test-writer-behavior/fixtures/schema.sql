@@ -1,0 +1,3 @@
+CREATE TABLE orders (id INTEGER PRIMARY KEY, owner TEXT NOT NULL, status TEXT NOT NULL);
+CREATE TABLE events (order_id INTEGER NOT NULL, event_id TEXT NOT NULL CHECK (event_id <> 'FAIL_DB'));
+INSERT INTO orders VALUES (101, 'alice', 'PENDING');
