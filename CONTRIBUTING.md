@@ -10,8 +10,9 @@ Reviewers use Read, Glob and Grep only; designers and test writers have scoped o
 Runtime discovery and coordinated execution belong in runtime/. MCP and hooks
 must delegate. Static inspection never imports application modules. Checks never
 install dependencies; initialization never runs checks or installs dependencies.
-Align Claude/marketplace/Codex/package/lock/server versions on release. Update
-catalogs and evidence references when adding, renaming or removing components.
+Align Claude/marketplace/Codex/package/lock/server versions and the expected-version
+guard in scripts/install-doctor.py on release. Update catalogs and evidence
+references when adding, renaming or removing components.
 
 ## Local validation
 
@@ -19,6 +20,9 @@ catalogs and evidence references when adding, renaming or removing components.
 npm ci --prefix mcp-server
 node --check mcp-server/index.js
 python3 -m py_compile runtime/*.py hooks/scripts/hook-runtime.py scripts/install-doctor.py
+# Choose a writable temporary base outside a project/workspace.
+# The validated Linux host used /var/tmp because /tmp contains a .git marker.
+export TMPDIR=/var/tmp
 bash tests/run-all.sh
 npm audit --prefix mcp-server --omit=dev
 claude plugin validate . --strict
@@ -47,7 +51,8 @@ install them. Fixtures create isolated temporary environments and run actual
 pytest/Ruff/mypy/Alembic through Python, uv and Poetry. See tests/python-ecosystem/README.md.
 Record actual OS/tool versions, warnings and skipped checks. Linux evidence does
 not establish macOS/WSL or a Node/Python matrix. Codex smoke tests must not make
-model calls or modify account configuration. See docs/codex.md.
+model calls or modify global account configuration. The optional installation
+smoke creates registration/cache only in a disposable CODEX_HOME. See docs/codex.md.
 
 Behavioral evaluations need a separate explicit budget and authorization. The
 offline harness only prepares or compares evidence: evals/README.md. Functional

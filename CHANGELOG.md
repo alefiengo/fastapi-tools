@@ -1,6 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Correct root documentation: measured platform coverage, namespaced Claude review
+  command, fingerprint exclusions, agent instruction boundaries, interrupted staging
+  cleanup, isolated example preparation, project provenance and version history.
+- Document the intentional 0.1.0 to 0.3.0 numbering jump. No 0.2.0 tag or release
+  existed. Keep published tags and their source contents intact.
+
 ## [0.3.0] - 2026-10-31
+
+This version number was selected to match the Spring Boot reference during the
+parity work. The preceding FastAPI tag was v0.1.0; no v0.2.0 was created.
+Matching version numbers do not establish equivalent capabilities or validation.
 
 - Add explicit local FastAPI initialization with protected ancestors, staging and
   exclusive publication; keep generation separate from dependency installation.
@@ -14,7 +26,12 @@
   badges and Dependabot automation while preserving application CI guidance.
 - Document architecture, compatibility, upgrades, security and local release evidence.
 
-## 0.1.0
+## [0.1.0] - 2026-10-08
 
 Initial FastAPI adaptation for Claude Code, with skills, specialist agents, hooks,
-MCP and a shared Python runtime. No earlier GitHub release was published.
+MCP and a shared Python runtime. Tag v0.1.0 identifies commit
+2887440a9ecfe211142d28a4ab28ba70ddd13908. This tag existed before 0.3.0; it did
+not have a GitHub Release entry when 0.3.0 was published.
+
+[0.3.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.3.0
+[0.1.0]: https://github.com/alefiengo/fastapi-tools/tree/v0.1.0
