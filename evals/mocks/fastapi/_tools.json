@@ -1,0 +1,199 @@
+{
+  "tools": [
+    {
+      "name": "analyze_project",
+      "description": "Discover Python project metadata, declared dependencies, environment and static FastAPI routes without importing the app.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "initialize_project",
+      "description": "Generate a local FastAPI project only for an explicit user request. Requires an absolute absent destination with an existing parent outside Python projects/workspaces; refuses symlink ancestors and concurrent destinations. Installs nothing and executes no code.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "destination": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "projectName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "explicitRequest": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "destination",
+          "projectName",
+          "explicitRequest"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "run_build",
+      "description": "Run finite Python checks through shared locks and fingerprints. verify checks syntax plus declared/configured Ruff, mypy and pytest. Does not install dependencies.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "task": {
+            "default": "compile",
+            "type": "string",
+            "enum": [
+              "compile",
+              "lint",
+              "typecheck",
+              "package",
+              "verify",
+              "check",
+              "dependencies"
+            ]
+          },
+          "force": {
+            "default": false,
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "name": "run_tests",
+      "description": "Run pytest with a fresh JUnit report and structured failures under the shared project lock.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "testPath": {
+            "description": "Relative pytest file/directory, optionally ::class::test.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "check_migrations",
+      "description": "Inspect Alembic revision graphs and upgrade risks without database access. Explicit status mode executes alembic current against the configured database.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "mode": {
+            "default": "lint",
+            "type": "string",
+            "enum": [
+              "lint",
+              "status"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "openapi_endpoints",
+      "description": "Inventory static FastAPI routes, fetch runtime OpenAPI from the local application or compare both with parser limitations.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "mode": {
+            "default": "static",
+            "type": "string",
+            "enum": [
+              "static",
+              "runtime",
+              "compare"
+            ]
+          },
+          "baseUrl": {
+            "description": "Loopback application URL (localhost, 127.0.0.0/8 or [::1]); defaults to http://localhost:<app port>.",
+            "type": "string",
+            "maxLength": 2048
+          },
+          "documentPath": {
+            "default": "/openapi.json",
+            "type": "string",
+            "maxLength": 300,
+            "pattern": "^\\/(?!\\/)[^?#]*$"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "app_health",
+      "description": "Query configured health/readiness/liveness paths of the local application. FastAPI does not supply health routes automatically.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "baseUrl": {
+            "description": "Loopback application URL (localhost, 127.0.0.0/8 or [::1]); defaults to http://localhost:<app port>.",
+            "type": "string",
+            "maxLength": 2048
+          },
+          "probes": {
+            "default": [
+              "health"
+            ],
+            "minItems": 1,
+            "maxItems": 3,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "health",
+                "readiness",
+                "liveness"
+              ]
+            }
+          },
+          "paths": {
+            "type": "object",
+            "properties": {
+              "health": {
+                "type": "string",
+                "maxLength": 300,
+                "pattern": "^\\/(?!\\/)[^?#]*$"
+              },
+              "readiness": {
+                "type": "string",
+                "maxLength": 300,
+                "pattern": "^\\/(?!\\/)[^?#]*$"
+              },
+              "liveness": {
+                "type": "string",
+                "maxLength": 300,
+                "pattern": "^\\/(?!\\/)[^?#]*$"
+              }
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

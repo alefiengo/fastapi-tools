@@ -1,6 +1,6 @@
 ---
 name: fastapi-test-writer
-description: Write focused pytest/FastAPI tests using existing fixtures and error contracts.
+description: Write focused pytest/FastAPI tests using existing fixtures and error contracts. Use when FastAPI behavior needs new or corrected tests; edits test sources and fixtures only and leaves execution to the caller.
 tools: Read, Glob, Grep, Write, Edit
 ---
 

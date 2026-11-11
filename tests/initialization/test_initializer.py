@@ -50,6 +50,8 @@ class InitializerTests(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         config = tomllib.loads((self.target / 'pyproject.toml').read_text())
         self.assertEqual(config['tool']['fastapi']['entrypoint'], 'app.main:app')
+        # Starlette >=1.2 TestClient uses httpx2; plain httpx is deprecated there.
+        self.assertEqual(config['project']['optional-dependencies']['test'], ['pytest', 'httpx2'])
         self.assertIn('pytest', discover(self.target)['checks'])
         self.assertEqual(static_endpoints(self.target)['endpoints'][0]['path'], '/')
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ['service'])
@@ -189,6 +191,20 @@ project_runtime.main()
             initializer.initialize_project(self.request())
         self.assertEqual((stage / 'keep').read_text(), 'original')
         self.assertFalse(self.target.exists())
+
+    def test_filesystem_without_exclusive_rename_is_explained_and_cleaned(self):
+        import errno
+
+        class Rename:
+            def __call__(self, *args):
+                return -1
+        libc = type('Libc', (), {'renameat2': Rename(), 'renameatx_np': Rename()})()
+        for code in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP):
+            with self.subTest(code=code), patch.object(initializer.ctypes, 'CDLL', return_value=libc), \
+                    patch.object(initializer.ctypes, 'get_errno', return_value=code), \
+                    self.assertRaisesRegex(ValueError, 'does not support exclusive directory publication'):
+                initializer.initialize_project(self.request())
+            self.assertEqual(list(self.root.iterdir()), [])
 
     def test_unsupported_exclusive_rename_fails_closed_and_cleans(self):
         with patch.object(initializer.sys, 'platform', 'unsupported'), self.assertRaisesRegex(ValueError, 'unavailable'):

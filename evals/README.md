@@ -37,10 +37,17 @@ bash tests/evaluations/test-basic.sh
 
 Activation graders are independent of quality graders. A false-activation check
 uses `min: 0`, `max: 0`, `arm: both`; a quality answer cannot establish that no
-skill was invoked. The initializer cases cover authorization and protected paths;
-real generation additionally requires the installed MCP tool schema, explicit
-tool grants and runtime dependencies. Without those, its positive case only
-checks handling of unavailable capabilities, never successful scaffolding.
+skill was invoked. Positive `Agent` activation uses `arm: with-only`, because the
+host excludes only `tool_used: Skill` graders from the without-arm. The `neg-*`
+cases are near-miss prompts that must not activate FastAPI components.
+
+Cases that depend on MCP tools use mocks: `mocks/fastapi/<tool>.md` holds a real
+server response and `evals/mocks/fastapi/_tools.json` the real `tools/list`.
+MCP graders name `mcp__plugin_fastapi-tools_fastapi__<tool>`. The initializer
+cases cover authorization and protected paths through mocked calls; mocks never
+create files, and runtime/MCP regressions verify generation separately.
+`pr-docs-selectivity` invokes `/fastapi-tools:fastapi-pr-review` as the user,
+because the skill disables model invocation.
 
 The checked-in two-arm report is explicitly synthetic regression data. It is
 not a paid evaluation result, a measured component benefit or a release gate.

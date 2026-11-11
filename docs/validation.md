@@ -1,5 +1,11 @@
 # Validation for FastAPI Tools 0.3.0
 
+This report describes the 0.3.0 release as published on 2026-11-01. Later changes
+are listed under Unreleased in [CHANGELOG.md](../CHANGELOG.md); for example, a
+production `npm audit` run on 2026-11-11 reported one low advisory in
+fast-xml-parser 5.11.2; the unreleased tree uses 5.12.0. Re-run the commands in
+CONTRIBUTING.md to validate a newer snapshot.
+
 Release validation is performed on the snapshot identified by its annotated tag.
 The attached GitHub release report records the exact commit, executed commands,
 results and environment. See [contributing](../CONTRIBUTING.md) for reproduction.

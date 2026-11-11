@@ -32,17 +32,18 @@ class DoctorTests(unittest.TestCase):
         for name in ('.claude-plugin/plugin.json', '.claude-plugin/marketplace.json',
                      '.codex-plugin/plugin.json', '.mcp.json', 'codex/mcp.json',
                      'codex/run.mjs', 'codex/launch.mjs', 'mcp-server/index.js',
-                     'mcp-server/package.json', 'mcp-server/package-lock.json',
-                     'runtime/project_runtime.py', 'runtime/project_initializer.py', 'scripts/install-doctor.py'):
+                     'mcp-server/package.json', 'package.json', 'package-lock.json',
+                     'runtime/project_runtime.py', 'runtime/source_inventory.py',
+                     'runtime/project_initializer.py', 'scripts/install-doctor.py'):
             target = self.bundle / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / name, target)
         (self.bundle / 'skills').mkdir()
         # Resolution fixtures deliberately throw if imported. A doctor must only
         # resolve entrypoints and must never start this mock dependency's code.
-        package = json.loads((self.bundle / 'mcp-server/package.json').read_text())
+        package = json.loads((self.bundle / 'package.json').read_text())
         for name in package['dependencies']:
-            dep = self.bundle / 'mcp-server/node_modules' / name
+            dep = self.bundle / 'node_modules' / name
             dep.mkdir(parents=True)
             for target in ('index.cjs', 'index.mjs', 'stdio.mjs'):
                 (dep / target).write_text('throw new Error("must not import dependencies");')
@@ -107,13 +108,13 @@ class DoctorTests(unittest.TestCase):
 
     def test_missing_dependency(self):
         self.needs_node()
-        shutil.rmtree(self.bundle / 'mcp-server/node_modules/zod')
+        shutil.rmtree(self.bundle / 'node_modules/zod')
         result = self.run_doctor(expected=1)
         self.assertIn('zod', result['dependencies']['message'])
 
     def test_missing_esm_target_despite_valid_cjs_entrypoint(self):
         self.needs_node()
-        dependency = self.bundle / 'mcp-server/node_modules/@modelcontextprotocol/server'
+        dependency = self.bundle / 'node_modules/@modelcontextprotocol/server'
         for target, specifier in (('index.mjs', '@modelcontextprotocol/server'),
                                   ('stdio.mjs', '@modelcontextprotocol/server/stdio')):
             with self.subTest(target=target):
@@ -129,7 +130,7 @@ class DoctorTests(unittest.TestCase):
 
     def test_missing_esm_subpath_export(self):
         self.needs_node()
-        self.mutate_json('mcp-server/node_modules/@modelcontextprotocol/server/package.json',
+        self.mutate_json('node_modules/@modelcontextprotocol/server/package.json',
                          lambda data: data['exports'].pop('./stdio'))
         result = self.run_doctor(expected=1)
         self.assertIn('@modelcontextprotocol/server/stdio', result['dependencies']['message'])
@@ -181,7 +182,7 @@ class DoctorTests(unittest.TestCase):
         self.assertIn('loader template', self.run_doctor(expected=1)['registrations']['message'])
 
     def test_required_runtime_file(self):
-        for name in ('project_runtime.py', 'project_initializer.py'):
+        for name in ('project_runtime.py', 'source_inventory.py', 'project_initializer.py'):
             with self.subTest(name=name):
                 target = self.bundle / 'runtime' / name
                 target.unlink()
@@ -302,6 +303,45 @@ class DoctorTests(unittest.TestCase):
             result = DOCTOR.diagnose(args)
         self.assertEqual(result['exitCode'], 1)
         self.assertEqual(len(result['checks']), 1)
+
+    def test_root_package_layout_and_stale_server_modules(self):
+        self.needs_node()
+        result = self.run_doctor()
+        self.assertEqual(result['versions']['version'], json.loads((ROOT / '.claude-plugin/plugin.json').read_text())['version'])
+        self.assertNotIn('stale_server_node_modules', result)
+        (self.bundle / 'mcp-server/node_modules').mkdir()
+        self.assertEqual(self.run_doctor()['stale_server_node_modules']['status'], 'warning')
+        self.mutate_json('mcp-server/package.json', lambda data: data.update(dependencies={'zod': '^4'}))
+        self.assertIn('only select ESM', self.run_doctor(expected=1)['registrations']['message'])
+
+    def test_versions_follow_the_plugin_manifest_not_a_fixed_literal(self):
+        self.needs_node()
+        for name in ('.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'package.json', 'package-lock.json'):
+            self.mutate_json(name, lambda data: data.update(version='9.9.9'))
+        self.mutate_json('package-lock.json', lambda data: data['packages'][''].update(version='9.9.9'))
+        self.mutate_json('.claude-plugin/marketplace.json', lambda data: data['plugins'][0].update(version='9.9.9'))
+        index = self.bundle / 'mcp-server/index.js'
+        index.write_text(index.read_text().replace('version: "0.3.0"', 'version: "9.9.9"'))
+        self.assertEqual(self.run_doctor()['versions']['version'], '9.9.9')
+
+    def test_codex_env_vars_and_claude_registration_shape(self):
+        self.needs_node()
+        original = json.loads((self.bundle / 'codex/mcp.json').read_text())['mcpServers']['fastapi']['env_vars']
+        self.assertNotIn('requires_local_executor', json.loads((self.bundle / '.codex-plugin/plugin.json').read_text()))
+        for names in (original + ['VIRTUAL_ENV'], original[1:] + original[:1], [n for n in original if n != 'FASTAPI_TOOLS_PYTHON']):
+            with self.subTest(names=names[:2]):
+                self.mutate_json('codex/mcp.json', lambda data: data['mcpServers']['fastapi'].update(env_vars=names))
+                self.assertIn('env_vars', self.run_doctor(expected=1)['registrations']['message'])
+        self.mutate_json('codex/mcp.json', lambda data: data['mcpServers']['fastapi'].update(env_vars=original + ['EXTRA_SETTING']))
+        self.assertEqual(self.run_doctor()['registrations']['status'], 'ok')
+        self.mutate_json('.mcp.json', lambda data: data['mcpServers']['fastapi'].update(cwd='${CLAUDE_PROJECT_DIR}'))
+        self.assertIn('no cwd', self.run_doctor(expected=1)['registrations']['message'])
+
+    def test_project_root_above_workspace_is_reported(self):
+        self.needs_node()
+        nested = self.app / 'service'; nested.mkdir()
+        result = self.run_doctor('--workspace', str(nested), '--project', str(nested))
+        self.assertEqual(result['project_root_above_workspace']['status'], 'warning')
 
 
 if __name__ == '__main__':

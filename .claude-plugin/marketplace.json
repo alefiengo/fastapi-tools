@@ -13,6 +13,9 @@
       "author": {
         "name": "alefiengo"
       },
+      "homepage": "https://github.com/alefiengo/fastapi-tools#readme",
+      "repository": "https://github.com/alefiengo/fastapi-tools",
+      "license": "MIT",
       "keywords": [
         "fastapi",
         "python",

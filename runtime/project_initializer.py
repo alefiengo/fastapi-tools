@@ -83,6 +83,10 @@ def publish(parent, stage, destination):
         code = ctypes.get_errno()
         if code in (errno.EEXIST, errno.ENOTEMPTY):
             raise ValueError('destination appeared during initialization; nothing replaced')
+        if code in (errno.EINVAL, errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP):
+            # For example WSL drvfs (/mnt/c) and some network filesystems.
+            raise ValueError('The destination filesystem does not support exclusive directory publication; '
+                             'choose a destination on a local Linux/macOS filesystem')
         raise OSError(code, os.strerror(code))
 
 
@@ -99,7 +103,7 @@ requires-python = ">=3.11"
 dependencies = ["fastapi[standard]"]
 
 [project.optional-dependencies]
-test = ["pytest", "httpx"]
+test = ["pytest", "httpx2"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

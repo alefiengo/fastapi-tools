@@ -1,13 +1,13 @@
 ---
 name: fastapi-testing
-description: Write or troubleshoot pytest, FastAPI TestClient/HTTPX tests, dependency overrides and isolated database integration tests.
+description: Write or troubleshoot tests for FastAPI applications using pytest with TestClient/HTTPX, dependency overrides, lifespan and isolated database integration tests. Not for Python projects without FastAPI.
 ---
 
 # Testing for FastAPI
 
 Read the behavior, fixtures, error contract and test configuration before choosing scope. Add tests for observable successes, validation, absence, ownership/tenant access and a demonstrated failure path. Do not change production code merely to simplify tests. Reuse existing fixtures.
 
-For synchronous tests use TestClient as a context manager so lifespan executes. For async tests use HTTPX AsyncClient with ASGITransport; HTTPX alone does not trigger lifespan. Manage lifespan explicitly with the existing fixture or asgi-lifespan when needed. Select the AnyIO backend the application's driver supports.
+For synchronous tests use TestClient as a context manager so lifespan executes. For async tests use HTTPX AsyncClient with ASGITransport; HTTPX alone does not trigger lifespan. Manage lifespan explicitly with the existing fixture or asgi-lifespan when needed. Select the AnyIO backend the application's driver supports. Starlette 1.2+ supports `httpx2` for TestClient, and current releases warn that using `httpx` there is deprecated; declare `httpx2` in the test dependencies (it also provides `AsyncClient` and `ASGITransport`) unless the project pins an older Starlette.
 
 ```python
 from fastapi.testclient import TestClient

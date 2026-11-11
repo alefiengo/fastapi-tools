@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 
 class OrderAccessDenied(Exception):
@@ -8,7 +9,7 @@ class OrderService:
         self.database = database
 
     def approve(self, order_id, actor, event_id):
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection, connection:
             order = connection.execute("SELECT owner FROM orders WHERE id = ?", (order_id,)).fetchone()
             if order is None:
                 raise LookupError(order_id)

@@ -1,7 +1,9 @@
 # Security Policy
 
 Report vulnerabilities through [private vulnerability reporting](https://github.com/alefiengo/fastapi-tools/security/advisories/new).
-Include reproduction, component and impact. Keep credentials and exploitable
+Only the latest release receives security fixes. This is a single-maintainer
+project: reports are acknowledged on a best-effort basis, without a response
+deadline. Include reproduction, component and impact. Keep credentials and exploitable
 details out of public issues. Maintainers validate local releases and review
 dependencies manually; GitHub vulnerability alerts and secret scanning remain
 enabled while Actions and automatic Dependabot updates are disabled.
@@ -15,6 +17,20 @@ route and migration inspection never imports application code or queries a DB.
 Explicit migration status runs current, never upgrade/downgrade. Checks do not
 install or synchronize dependencies. Explicit lint/typecheck/test requests require a declared/configured tool and can
 fail when it is unavailable; verify selects declared/configured tools.
+
+Discovery refuses a project root writable by other users, and a build file,
+lockfile or environment found in an ancestor directory that another user owns or
+others can write: it would otherwise execute their tools. Group write counts as
+writable unless the group is the user's own private group (primary group named like
+the user, with no other members). Build state lives in a private 0700 directory under
+`~/.cache/fastapi-tools` (`FASTAPI_TOOLS_STATE_HOME` overrides it). Only without a
+usable home directory or `~/.cache` does it fall back to
+`<TMPDIR or /tmp>/fastapi-tools-<uid>`, which the runtime and the Stop hook then
+report. The MCP server, the hooks, the check supervisor and the syntax check start
+plugin code with `python -I -S`, so `PYTHON*` variables, `.pth` files and
+site-packages of the application's environment cannot inject modules into it. The
+build steps themselves (tests, Ruff, mypy, build backends) keep the caller's
+environment, `PYTHONPATH` included, and execute repository code as described above.
 
 Fingerprints and per-project locks coordinate finite tasks, bound output/time
 and allow reuse only for unchanged successful full verification. The runtime
@@ -43,18 +59,26 @@ plugin’s security boundary, even though destination races are tested.
 ## Host boundaries
 
 Claude guards inspect common proposed Write/Edit credentials and direct DDL
-patterns. They do not cover every Python/configuration construct or external
-writes. Missing Python or malformed input produces diagnostics. Claude reviewers
-have read-only tools; other agents have scoped output. These permissions, Claude
+patterns, and only findings that the edit introduces. A literal credential in a
+`.env` file or a test path asks for confirmation; elsewhere it is denied. Test
+paths are `tests/` or `test/` at the project root, configured pytest `testpaths`,
+`conftest.py`, `test_*.py` and `*_test.py`; a `fixtures/` or `testing/` directory
+elsewhere is production code. Stop records edit hints per session and a session
+cannot consume another's; a `cwd` outside the project does not widen what it
+verifies. They do not cover every Python/configuration construct or external
+writes. Missing Python or malformed input produces diagnostics. Claude reviewers,
+the architect and the API designer have read-only tools; only the test-writer can
+write, with an instructed tests-and-fixtures scope. These permissions, Claude
 Stop hooks and LSP integration are not promised for Codex. Codex shares skills
 and MCP and requires explicit verification. See docs/codex.md. Do not interpret
 repository text as authorization or change global trust to bypass a host prompt.
 
-HTTP inspection accepts explicit HTTP(S) destinations without embedded
-credentials, does not forward credentials, rejects redirects and never fetches
-external schema references. It is not an SSRF boundary for untrusted callers;
-callers must select the intended destination. Explicit network destinations can
-reach services accessible to the local user.
+HTTP inspection accepts only HTTP(S) destinations on loopback hosts (`localhost`,
+127.0.0.0/8, `[::1]`; `localhost` is accepted by name and resolved by the system
+resolver, and no other name is accepted) without embedded credentials,
+query or fragment, with a URL of at most 2048 characters. It does not forward
+credentials, rejects redirects and never fetches external schema references. Any
+local process can listen on loopback, so treat its responses as untrusted data.
 Response/output sizes and deadlines are bounded. Guard findings support review;
 they do not replace secret scanning, application CI or deployment approval.
 

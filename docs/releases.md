@@ -2,9 +2,12 @@
 
 1. Choose a semantic version from changes to public tools, configuration and
    installation behavior. Update CHANGELOG.md and compatibility guidance.
-2. Align the Claude plugin, marketplace, MCP package, both lockfile roots and
-   server initialization version. Align the Codex manifest and doctor guard when
-   those components are present. Preserve dependency resolutions unless audited.
+2. Align the Claude plugin, marketplace, Codex manifest, root package.json,
+   package-lock.json (both version fields) and the server initialization version in
+   mcp-server/index.js. The doctor compares them with the Claude plugin version, so it
+   needs no edit; the version-reading tests must still pass. Mention the new version
+   in the README clone example. Preserve dependency resolutions unless audited.
+   `tests/repository` fails when documentation, manifests or counts disagree.
 3. Run CONTRIBUTING.md checks for the features in the release. Record actual
    platform/tool versions and limitations; behavioral evaluations need a separate
    explicit budget and authorization.

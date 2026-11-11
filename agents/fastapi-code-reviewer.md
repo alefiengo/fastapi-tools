@@ -1,6 +1,6 @@
 ---
 name: fastapi-code-reviewer
-description: Review FastAPI correctness, authorization and contract changes.
+description: Review FastAPI correctness, authorization and contract changes. Use when a FastAPI change or pull request needs an independent read-only review of routes, validation, ownership checks or response contracts.
 tools: Read, Glob, Grep
 ---
 

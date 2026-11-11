@@ -7,6 +7,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const readline = require('node:readline');
 const http = require('node:http');
 const entry = path.resolve(__dirname, '../../mcp-server/index.js');
+const { removeBuildState } = require('./build-state.cjs');
 
 async function fixture(t, files, env = {}, temporaryBase = os.tmpdir()) {
   const root = await fs.mkdtemp(path.join(temporaryBase, 'mcp-regression-'));
@@ -31,7 +32,7 @@ async function fixture(t, files, env = {}, temporaryBase = os.tmpdir()) {
     pending.set(id, data => { clearTimeout(timer); data.error ? reject(new Error(data.error.message)) : resolve(data.result); });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n');
   });
-  t.after(async () => { child.kill(); await fs.rm(root, { recursive: true, force: true }); });
+  t.after(async () => { child.kill(); removeBuildState(root); await fs.rm(root, { recursive: true, force: true }); });
   const initialized = await request('initialize', { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'regression', version: '1' } });
   assert.equal(initialized.protocolVersion, '2025-11-25');
   child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
@@ -234,6 +235,8 @@ const running = pid => {
 test('schema-less analyze_project cancellation kills a descendant ignoring SIGTERM', async t => {
   const shim = `#!${pythonExecutable}
 import pathlib, subprocess, sys, time
+if '-c' in sys.argv:  # Runtime interpreter version probe (after -I -S).
+    exec(sys.argv[sys.argv.index('-c') + 1])
 root = pathlib.Path(__file__).resolve().parents[1]
 child = subprocess.Popen([sys.executable, '-c', 'import signal,time; signal.signal(signal.SIGTERM,signal.SIG_IGN); print("ready",flush=True); time.sleep(30)'], stdout=subprocess.PIPE)
 child.stdout.readline()

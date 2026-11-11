@@ -1,6 +1,6 @@
 ---
 name: fastapi-migration-reviewer
-description: Review Alembic revision history, locking and rolling-deployment compatibility.
+description: Review Alembic revision history, locking and rolling-deployment compatibility. Use when Alembic revisions of a FastAPI application need an independent read-only review before release.
 tools: Read, Glob, Grep
 ---
 

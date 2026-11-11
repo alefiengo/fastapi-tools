@@ -1,22 +1,29 @@
-# Codex: local adapter and offline diagnostics (0.3.0)
+# Codex: local adapter and offline diagnostics
 
-Plugin 0.3.0 provides `.codex-plugin/plugin.json`, reuses `skills/` and references
-`codex/mcp.json`. OpenAI documents this compatibility format. The root `.mcp.json`
+The plugin provides `.codex-plugin/plugin.json`, reuses `skills/` and references
+`codex/mcp.json`. OpenAI documents this compatibility format. The manifest carries no
+`requires_local_executor` key: it is not defined by the Codex loader or by OpenAI's
+guide, so it never had an effect. The root `.mcp.json`
 belongs to Claude Code: its project variables and `user_config` must not be copied
 to Codex.
 
 ## Local use
 
-Linux/macOS, Node >=20.3, Python >=3.11 and the locked `mcp-server/` dependencies
-must be prepared beforehand. The adapter does not install dependencies.
+Linux/macOS, Node >=20.3, Python >=3.11 and the locked dependencies (package.json and
+package-lock.json at the plugin root) must be prepared beforehand. The adapter does not install dependencies.
 Application checks need their own Python environment and tools; only the runtime
 selects uv, Poetry or `.venv`.
 
 Prepare the locked server dependencies before installing the plugin:
 
 ```bash
-npm ci --omit=dev --prefix /absolute/path/fastapi-tools/mcp-server
+npm ci --omit=dev --prefix /absolute/path/fastapi-tools
 ```
+
+Codex installs by copying the registered directory into its cache, including `.git`,
+`node_modules` and `__pycache__` when present (measured with codex-cli 0.167.0:
+21 MB from a working tree). Register a clean clone of the release tag instead of a
+development checkout.
 
 Create a local marketplace outside the checkout and application. The following
 commands are an installation recipe. The doctor does not run them; the optional
@@ -53,8 +60,9 @@ codex plugin marketplace add /absolute/path/fastapi-local
 codex plugin add fastapi-tools@fastapi-local
 ```
 
-CLI 0.166.0 confirmed this recipe and local installation in a temporary CODEX_HOME:
-marketplace add, plugin add and plugin list reported 0.3.0 enabled. The separate
+Codex CLI 0.167.1 confirmed this recipe and local installation in a temporary
+CODEX_HOME on 2026-11-11 (0.166.0 did so when the adapter was first released): marketplace add,
+plugin add and plugin list reported the plugin version enabled. The separate
 protocol test registers MCP temporarily; it does not establish startup from the
 installed cache. Then start through the wrapper from the same checkout version:
 
@@ -65,9 +73,9 @@ node /absolute/path/fastapi-tools/codex/run.mjs -C /absolute/path/application
 The wrapper resolves its own location and passes `FASTAPI_TOOLS_PLUGIN_ROOT` only
 to the child process. It preserves arguments, cwd and exit status without writing
 configuration. MCP requires this absolute path and fails visibly if it is missing.
-`codex/mcp.json` forwards that variable and `FASTAPI_APP_PORT` through `env_vars`;
-it contains no Claude interpolation and does not set `cwd`. The default port is
-8000. For example:
+`codex/mcp.json` forwards that variable and `FASTAPI_APP_PORT` through `env_vars`
+(plus the toolchain variables listed below); it contains no Claude interpolation and
+does not set `cwd`. The default port is 8000. For example:
 
 ```bash
 FASTAPI_APP_PORT=8181 node /path/fastapi-tools/codex/run.mjs -C /path/application
@@ -82,9 +90,34 @@ versions aligned; the wrapper loads MCP from its own checkout.
 
 The explicit path handoff avoids depending on `${PLUGIN_ROOT}` expansion in the
 compatibility loader. This repository's tests validate the wrapper and its
-configuration with Codex 0.166.0; they do not test automatic expansion of that
+configuration with Codex 0.167.1; they do not test automatic expansion of that
 variable. Compatibility is not established for bare `codex` startup without the
 variable or desktop startup without this environment.
+
+## Environment forwarded to MCP
+
+Codex starts MCP servers with only HOME, LOGNAME, PATH, SHELL, USER, LANG, LC_ALL,
+TERM, TMPDIR, TZ, `__CF_USER_TEXT_ENCODING` (plus non-empty CA bundle variables) and the names listed in
+`env_vars` (codex-rs/rmcp-client/src/utils.rs, rust-v0.167.0). `codex/mcp.json`
+additionally forwards the plugin root and port, `FASTAPI_TOOLS_PYTHON`,
+`FASTAPI_TOOLS_STATE_HOME`,
+`VIRTUAL_ENV`, `PYTHONPATH`, uv (`UV_PROJECT_ENVIRONMENT`, `UV_CACHE_DIR`,
+`UV_PYTHON`, `UV_PYTHON_INSTALL_DIR`), Poetry (`POETRY_HOME`, `POETRY_DATA_DIR`,
+`POETRY_CONFIG_DIR`, `POETRY_CACHE_DIR`, `POETRY_VIRTUALENVS_PATH`,
+`POETRY_VIRTUALENVS_IN_PROJECT`), XDG directories and HTTP(S)/NO proxy variables.
+`FASTAPI_TOOLS_STATE_HOME` is also forwarded, so a location chosen for Claude Code is
+shared. `VIRTUAL_ENV` and `PYTHONPATH` reach build steps (the plugin runtime itself
+starts with `-I -S` and ignores them). Application variables such as `DATABASE_URL`
+or pydantic-settings values are not forwarded, so tests and `alembic current` can behave differently than in Claude
+Code, which inherits the full environment. Keep such settings in the application's
+own configuration files (for example `.env`) when using Codex.
+
+The Codex 0.167.0 manifest loader (codex-rs/core-plugins/src/manifest.rs) reads
+`name`, `version`, `description`, `keywords`, `skills`, `mcpServers`, `apps`, `hooks`,
+`interface` (including `developerName` and `websiteURL`) and `extensions`; other keys
+are ignored without error. The `author`, `license`, `repository` and `homepage` keys
+in `.codex-plugin/plugin.json` follow OpenAI's portable manifest example and
+identify the plugin to people and tools; the loader does not use them.
 
 ## Offline doctor
 
@@ -110,8 +143,10 @@ It checks:
 - Manifest JSON and internal paths, Claude/Codex registration, explicit hook
   suppression and reuse of skills, MCP and runtime.
 - The exact supported loader, inherited cwd, forwarded variables and wrapper path.
-- Agreement of plugin/marketplace/package/lock/server versions with 0.3.0 and
-  agreement of dependency declarations between package and lockfile.
+- Agreement of the plugin, marketplace, Codex manifest, package, lock and server
+  versions with `.claude-plugin/plugin.json`, and of the dependency declarations
+  between package and lockfile, both at the plugin root. A leftover
+  `mcp-server/node_modules` is reported as a warning because it shadows them.
 - Local ESM export resolution and file existence, including
   `@modelcontextprotocol/server/stdio`, without importing dependencies.
 
@@ -187,9 +222,9 @@ configuration. It starts an empty thread and calls `analyze_project`; an allowli
 excludes `turn/start` and `plugin/install`. It does not install the plugin or touch
 global configuration.
 
-Local verification with Codex CLI 0.166.0 passed with 16 skills, zero hooks and
-seven tools after initializer integration. Seven adapter regressions exercise the
-protocol and its limits. The separate install-smoke test verifies installation
+Local verification with Codex CLI 0.167.1 (2026-11-11) passed with 16 skills, zero
+hooks and seven tools. The adapter regressions exercise the protocol, forwarded
+variables, signal handling and limits. The separate install-smoke test verifies installation
 and listing in temporary state and removes its registry on exit. Neither smoke
 validates semantic skill selection or the desktop interface. Doctor regressions
 check absence of mutations, dependencies that would fail if imported, inconsistent
@@ -206,5 +241,6 @@ versions, missing exports, invalid JSON, escaping paths and probe limits.
 
 Sources consulted on 2026-10-31. `codex --help`, `codex plugin --help`,
 `codex plugin add --help` and `codex plugin marketplace add --help` confirmed the
-local 0.166.0 interface. Installation was tested only in temporary state; no global
-configuration changed and no publication, authentication or model-turn commands ran.
+local 0.166.0 interface (the 2026-11-11 recipe run used 0.167.1). Installation was
+tested only in temporary state; no global configuration changed and no publication,
+authentication or model-turn commands ran.

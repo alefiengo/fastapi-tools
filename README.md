@@ -12,16 +12,28 @@ Project initialization is local, explicit and separate from installation or exec
 
 - Node.js 20.3+ and npm for the MCP server.
 - Python 3.11+, Bash and POSIX facilities for the plugin runtime; native Windows is unsupported.
-- The application's compatible Python 3.11+ environment and its declared/configured check tools.
+  The runtime interpreter is independent of the application's environment. MCP and
+  hooks use `FASTAPI_TOOLS_PYTHON` when set; otherwise the first of `python3`,
+  `python3.14`, `python3.13`, `python3.12`, `python3.11` on PATH that reports 3.11
+  or later. If none qualifies, the tools fail with an explicit message and the hooks
+  skip with a diagnostic.
+- The application's own Python environment and its declared/configured check tools.
 - uv for projects with uv.lock, Poetry for projects with poetry.lock; otherwise
-  .venv/bin/python is preferred, with the runtime interpreter as fallback.
-- Optional Python diagnostics: pyright-langserver on PATH.
+  `.venv/bin/python`, then `venv/bin/python`, then an active `VIRTUAL_ENV` inside
+  the project root, with the runtime interpreter as fallback.
+- Optional Python diagnostics in Claude Code: install `pyright-langserver` with
+  `npm install -g pyright`, `pipx install pyright` or `pip install pyright`, and make
+  sure it is on the PATH of the shell that starts `claude`. This plugin registers the
+  same server as Anthropic's `pyright-lsp` plugin; do not enable both at once. Their
+  combined behavior (for example duplicated diagnostics) has not been verified.
 
 Inspect the application's dependency constraints. Guidance covers FastAPI,
 Pydantic, SQLAlchemy/SQLModel and Alembic without prescribing an application version.
-Validation used Linux, Node 24.21.0 and Python 3.12.10/3.12.14. macOS and WSL are
-implementation targets without an executed validation matrix. The prerequisite
-ranges above are not evidence that every Node/Python combination was tested.
+The 0.3.0 release validation used Linux, Node 24.21.0 and Python 3.12.10/3.12.14.
+Afterwards the 2026-11-11 audit also started the MCP server on Node 20.3.0 and ran the
+deterministic suites with Python 3.11.17. macOS and WSL are implementation targets
+without an executed validation matrix. The prerequisite ranges above are not
+evidence that every Node/Python combination was tested.
 
 ## Install and use
 
@@ -29,7 +41,7 @@ Install from GitHub:
 
 ```bash
 git clone --branch v0.3.0 https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
-npm ci --prefix ~/dev/fastapi-tools/mcp-server
+npm ci --omit=dev --prefix ~/dev/fastapi-tools
 cd /path/to/your/fastapi-project
 claude --plugin-dir ~/dev/fastapi-tools
 ```
@@ -44,8 +56,8 @@ claude plugin install fastapi-tools@fastapi-tools-marketplace
 From an existing local checkout:
 
 ```bash
-# From this repository:
-npm ci --prefix mcp-server
+# From this repository (the lockfile is at the repository root):
+npm ci
 cd /path/to/your/fastapi-project
 claude --plugin-dir /absolute/path/to/fastapi-tools
 ```
@@ -57,13 +69,18 @@ claude plugin marketplace add /absolute/path/to/fastapi-tools
 claude plugin install fastapi-tools@fastapi-tools-marketplace
 ```
 
-Install server dependencies in the installed plugin's mcp-server directory.
+Marketplace installs from a git or GitHub source install the locked server
+dependencies automatically (npm must be on PATH). `--plugin-dir` and local-path
+marketplaces load the checkout in place: run `npm ci` in its root first. The
+package.json and package-lock.json live at the plugin root so that Claude Code can
+find them; mcp-server/package.json only marks the server directory as ESM.
 Try: "Inspect this FastAPI project, run its tests and summarize failures."
 Use `/fastapi-tools:fastapi-pr-review` in Claude Code for a focused review.
 Plugin skills use the [plugin namespace](https://code.claude.com/docs/en/plugins).
 app_port defaults to 8000 and sets the default MCP HTTP inspection port.
 The plugin registers its server,
 hooks and optional Python LSP through .mcp.json, hooks/hooks.json and .lsp.json.
+The server receives the project root in `PROJECT_ROOT` (from `CLAUDE_PROJECT_DIR`).
 
 ## Codex and offline diagnosis
 
@@ -76,7 +93,9 @@ node /absolute/path/to/fastapi-tools/codex/run.mjs
 ```
 
 The launcher passes the bundle path per process; it does not install the plugin
-or change user configuration. Shared skills and MCP work in both hosts. Claude agent
+or change user configuration. Codex copies the whole registered directory into its
+cache, so register a clean clone rather than a working tree with `.git`,
+`node_modules` and caches. Shared skills and MCP work in both hosts. Claude agent
 permissions, Stop hooks and Python LSP registration are not Codex guarantees;
 Codex verification is explicit. See the [capability matrix](docs/capability-matrix.md).
 
@@ -94,7 +113,8 @@ Explicitly ask to create a new FastAPI project at an absolute, absent destinatio
 `initialize_project` requires `destination`, `projectName` and `explicitRequest: true`.
 The existing parent must be outside an existing Python project or workspace.
 Existing files, empty directories, dangling symlinks, symlink ancestors and nested
-projects are refused. Private sibling staging is removed on handled failures and
+projects are refused. The destination must be on a local Linux/macOS filesystem
+that supports exclusive directory rename; for example `/mnt/c` under WSL is refused. Private sibling staging is removed on handled failures and
 cancellation; abrupt termination can leave a private staging directory. Exclusive
 OS publication prevents replacement of a destination created during generation.
 No network, dependency installation, application imports, Git initialization or
@@ -136,9 +156,9 @@ settings or serialization; the skill itself is not an executable version check.
 - `fastapi-runtime-reviewer`
 - `fastapi-test-writer`
 
-Claude reviewer definitions allow Read, Glob and Grep only. Architect/API designer
-instructions scope their output to design or contract documents; test-writer
-instructions scope it to tests and fixtures. These writing scopes are instructions,
+Claude reviewer, architect and API designer definitions allow Read, Glob and Grep
+only; the designers return their documents in the response. The test-writer is the
+only agent with Write and Edit, and its tests-and-fixtures scope is an instruction,
 not filesystem isolation. The caller owns execution and provides verification
 evidence. Review selects only roles relevant to the change.
 
@@ -175,7 +195,18 @@ it does not establish which migrations have been applied.
 
 FastAPI has no built-in health routes. Defaults are /health, /health/ready and
 /health/live; supply `paths` matching the application. HTTP inspection accepts an
-explicit baseUrl, fetches no external schema references and forwards no credentials.
+explicit baseUrl (at most 2048 characters) only for loopback hosts: `localhost`,
+127.0.0.0/8 and `[::1]`; other hosts are refused before any request. It fetches no
+external schema references and forwards no credentials. `analyze_project`,
+`openapi_endpoints` and `app_health` are annotated read-only.
+
+The runtime may run as a different Python than the application. `FASTAPI_TOOLS_PYTHON`
+or the PATH search described under Requirements selects it, and the runtime starts
+with `python -I -S` (no `PYTHON*` variables, script directory, site or `.pth` files),
+as do the hooks, the check supervisor and the syntax check that runs under the
+application's own interpreter. The checks themselves (pytest, Ruff, mypy) keep the
+caller's environment, `PYTHONPATH` included. `testPath` accepts parametrized pytest ids such as
+`tests/test_api.py::test_item[param-id]` in the last path component only.
 
 ## Hooks and verification
 
@@ -188,27 +219,68 @@ explicit baseUrl, fetches no external schema references and forwards no credenti
 | verify-on-stop | Stop | Run or reuse equivalent successful full verification |
 
 Build hooks activate only for projects with a FastAPI declaration or import.
-After metadata errors, Stop blocks when static FastAPI import evidence remains;
-otherwise it reports a diagnostic without establishing framework identity.
-Files ending in .md, .rst or .adoc outside src are excluded from fingerprints;
-those under src remain build inputs. Checks serialize per project;
-reuse requires matching task, test scope, environment and file contents. Failed,
-cancelled or targeted test runs cannot satisfy the full gate. Force a rerun with
-`run_build` force:true (CLI reuse:false). Generated state stays in private temporary
-directories; pytest reports are written to the target project's .fastapi-tools/.
+Edit hints are recorded per session (`session_id`), so one session never consumes
+another's. Stop verifies the session's project root (the session `cwd` only inside
+one of the project's worktrees; a `cwd` outside the project does not widen the scope)
+and every project this session edited. With an edit hint from this session it always
+reruns the verification and blocks with the failure; a remembered failure cannot
+turn that gate into a notice. Without a hint it blocks only when the inputs changed
+since the last attempt, and a failure on unchanged inputs and environment is
+reported with a `systemMessage` instead of rerun. A failure is remembered only when
+it is definitive: inputs unchanged during the run, no timeout and no output limit.
+When Claude continues after a block (`stop_hook_active`), Stop still verifies but
+reports without blocking again. The Stop budget is 540 seconds. After metadata errors, Stop blocks when static FastAPI
+import evidence remains; otherwise it reports a diagnostic without establishing
+framework identity.
 
-Guards cover common scalar settings and direct Python assignments/calls. They are
-review aids, not complete secret scanners or an enforcement boundary. Malformed
-hook input or missing Python produces a diagnostic. Keep independent checks in
-the application's CI.
+Fingerprints exclude directories containing `pyvenv.cfg`, `.claude` and the
+patterns in `[tool.fastapi-tools] fingerprint-exclude`. Files named `*.db`,
+`*.sqlite*`, `*.log`, `.coverage*` or `coverage.xml` are excluded by name anywhere in
+the project (they are what tests write), so a change to a versioned fixture database
+does not invalidate reuse. Files ending in .md, .rst or .adoc outside src are
+excluded; those under src remain build inputs. Symlinks that stay inside the project
+are inputs, including a link to a directory that is itself ignored (its contents are
+hashed under the link's name); external, dangling or nested links in such a target
+prevent a successful verification result. Checks serialize per project; reuse
+requires matching task, test scope, file contents and the identity of the selected
+environment (`pyvenv.cfg` and the installed distribution and `.pth` names, so a
+`uv sync` invalidates it). Failed, cancelled or targeted test runs cannot
+satisfy the full gate. Force a rerun with `run_build` force:true (CLI reuse:false).
+Locks and state live in `<passwd home>/.cache/fastapi-tools/build-<sha256 of the
+resolved project root>` (mode 0700). `~/.cache` may be a symlink when its resolved
+target belongs to the user and only the user can write it. `FASTAPI_TOOLS_STATE_HOME`
+(an absolute, private 0700 directory) overrides the location and is forwarded by
+`codex/mcp.json`, so both hosts can share it. Only when no usable home directory or
+`~/.cache` exists does the runtime fall back to `<TMPDIR or /tmp>/fastapi-tools-<uid>`;
+it then reports `stateDiagnostic` in every runtime result and in the Stop hook
+message, because processes with a different `TMPDIR` do not share that fallback's
+locks or results. Pytest reports are written to the target project's
+.fastapi-tools/.
+
+Discovery refuses a project root writable by other users and a build file,
+lockfile or environment in an ancestor directory owned by another user or writable
+by others. Group write counts as writable unless the group is the user's own
+private group (primary group named like the user, with no other members). uv workspace members use the workspace lockfile and environment. mypy
+honors configured `files`, `packages` and `modules`.
+
+Guards inspect only findings introduced by the proposed edit. A literal credential
+in a `.env` file or a test path asks for confirmation; elsewhere it is denied.
+`metadata.drop_all()` is denied outside test/dev/local helpers. A test path is
+`tests/` or `test/` at the project root, a configured pytest `testpaths` entry
+(pyproject, pytest.ini, tox.ini or setup.cfg), `conftest.py`, `test_*.py` or
+`*_test.py`; a `fixtures/`, `testing/` or `tests/` directory elsewhere in the
+application is production code. Guards cover common
+scalar settings and direct Python assignments/calls. They are review aids, not
+complete secret scanners or an enforcement boundary. Malformed hook input or
+missing Python produces a diagnostic. Keep independent checks in the application's CI.
 
 ## Development
 
 ```bash
-npm ci --prefix mcp-server
+npm ci
 node --check mcp-server/index.js
-# Choose an existing writable temporary base outside any project/workspace.
-# /var/tmp was used on the validated Linux host; /tmp contains a project marker there.
+# Fixtures that create projects use TMPDIR (default /var/tmp); choose an existing
+# writable base outside any Python project or workspace. Runtime state does not use it.
 export TMPDIR=/var/tmp
 bash tests/run-all.sh
 # Prepare example dependencies in a local environment, then exercise FastAPI:
@@ -227,10 +299,11 @@ remain available in `fastapi-ci`.
 
 ## Upgrade and release
 
-Update the checkout to the exact release tag, run `npm ci --prefix mcp-server`,
-run the doctor, and restart the host. Marketplace users must update their installed
-bundle and install MCP dependencies there; updating a source checkout does not
-refresh a host cache. For Codex, update the same registered local path and relaunch
+Update the checkout to the exact release tag, run `npm ci --omit=dev` in its root,
+run the doctor, and restart the host. Marketplace users run `claude plugin update`;
+Claude Code installs the locked dependencies into the new cached version. Updating a
+source checkout does not refresh a host cache. A leftover `mcp-server/node_modules`
+from an older checkout shadows the root dependencies: the doctor warns about it; remove it. For Codex, update the same registered local path and relaunch
 through `codex/run.mjs`. See [CHANGELOG.md](CHANGELOG.md) for features and compatibility changes
 and the [release procedure](docs/releases.md).
 

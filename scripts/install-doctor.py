@@ -16,6 +16,14 @@ import time
 
 LIMIT = 65536
 TIMEOUT = 5
+# codex/mcp.json env_vars: the plugin root first, then build/tool settings.
+CODEX_ENV_VARS = (
+    'FASTAPI_TOOLS_PLUGIN_ROOT', 'FASTAPI_APP_PORT', 'FASTAPI_TOOLS_PYTHON', 'VIRTUAL_ENV', 'PYTHONPATH',
+    'UV_PROJECT_ENVIRONMENT', 'UV_CACHE_DIR', 'UV_PYTHON', 'UV_PYTHON_INSTALL_DIR',
+    'POETRY_HOME', 'POETRY_DATA_DIR', 'POETRY_CONFIG_DIR', 'POETRY_CACHE_DIR', 'POETRY_VIRTUALENVS_PATH',
+    'POETRY_VIRTUALENVS_IN_PROJECT', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME',
+    'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+)
 # Supported codex/mcp.json loader, compared as data and never evaluated here.
 CODEX_LOADER = (
     "const root = process.env.FASTAPI_TOOLS_PLUGIN_ROOT; if (!root || !require('node:path').isAbsolute(root)) { "
@@ -157,9 +165,11 @@ def diagnose(args):
         return path
 
     documents = {}
+    # Server dependencies are declared and locked at the plugin root, where
+    # marketplace installs run npm; mcp-server/package.json only sets ESM mode.
     for relative in ('.claude-plugin/plugin.json', '.claude-plugin/marketplace.json',
                      '.codex-plugin/plugin.json', '.mcp.json', 'codex/mcp.json',
-                     'mcp-server/package.json', 'mcp-server/package-lock.json'):
+                     'package.json', 'package-lock.json', 'mcp-server/package.json'):
         def load(relative=relative):
             documents[relative] = read_json(bundle_file(relative))
         check('json:' + relative, load)
@@ -175,23 +185,29 @@ def diagnose(args):
         require(bundle_file(codex['mcpServers']) == root / 'codex/mcp.json',
                 'Codex MCP registration must reference codex/mcp.json')
         require(codex['hooks'] == {'hooks': {}}, 'Codex must explicitly disable Claude hooks')
-        require(codex['requires_local_executor'] is True, 'Codex requires a local executor')
         server = documents['codex/mcp.json']['mcpServers']['fastapi']
         require(server['command'] == 'node', 'Codex MCP command must be node')
         require('cwd' not in server and 'env' not in server,
                 'Codex must inherit workspace cwd and use explicit env_vars forwarding')
         require(server['args'] == ['-e', CODEX_LOADER],
                 'Codex launcher registration must match the supported codex/launch.mjs loader template')
-        require(server['env_vars'] == ['FASTAPI_TOOLS_PLUGIN_ROOT', 'FASTAPI_APP_PORT'],
-                'Codex env_vars must be a string array forwarding FASTAPI_TOOLS_PLUGIN_ROOT')
+        names = server['env_vars']
+        require(isinstance(names, list) and all(isinstance(name, str) for name in names)
+                and names[:1] == ['FASTAPI_TOOLS_PLUGIN_ROOT'] and len(set(names)) == len(names)
+                and set(CODEX_ENV_VARS) <= set(names),
+                'Codex env_vars must be a duplicate-free string array starting with FASTAPI_TOOLS_PLUGIN_ROOT '
+                'and forwarding the plugin, Python, uv, Poetry, XDG and proxy settings')
         legacy = documents['.mcp.json']['mcpServers']['fastapi']
         require(legacy['command'] == 'node'
                 and legacy['args'] == ['${CLAUDE_PLUGIN_ROOT}/mcp-server/index.js']
-                and legacy['cwd'] == '${CLAUDE_PROJECT_DIR}'
+                and 'cwd' not in legacy
                 and legacy['env']['PROJECT_ROOT'] == '${CLAUDE_PROJECT_DIR}',
-                'Malformed Claude MCP registration')
-        for path in ('codex/run.mjs', 'codex/launch.mjs', 'mcp-server/index.js',
-                     'runtime/project_runtime.py', 'runtime/project_initializer.py'):
+                'Malformed Claude MCP registration (the project arrives in PROJECT_ROOT; no cwd)')
+        module = documents['mcp-server/package.json']
+        require(module.get('type') == 'module' and not {'dependencies', 'version'} & set(module),
+                'mcp-server/package.json must only select ESM; dependencies belong to the root package.json')
+        for path in ('codex/run.mjs', 'codex/launch.mjs', 'mcp-server/index.js', 'runtime/project_runtime.py',
+                     'runtime/source_inventory.py', 'runtime/project_initializer.py'):
             bundle_file(path)
     check('registrations', registrations)
 
@@ -201,9 +217,9 @@ def diagnose(args):
                 'Marketplace plugins must be an array of objects')
         entries = [item for item in market if item['name'] == 'fastapi-tools']
         require(len(entries) == 1 and entries[0]['source'] == './', 'Malformed marketplace registration')
-        lock = documents['mcp-server/package-lock.json']
+        lock = documents['package-lock.json']
         versions = {name: documents[name]['version'] for name in (
-            '.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'mcp-server/package.json')}
+            '.claude-plugin/plugin.json', '.codex-plugin/plugin.json', 'package.json')}
         versions.update(marketplace=entries[0]['version'], lock=lock['version'],
                         lock_package=lock['packages']['']['version'])
         source = bundle_file('mcp-server/index.js').read_text()
@@ -213,16 +229,15 @@ def diagnose(args):
         require(all(isinstance(v, str) and re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', v)
                     for v in versions.values()), 'Malformed version')
         require(len(set(versions.values())) == 1, f'Bundle versions disagree: {versions}')
-        package = documents['mcp-server/package.json']
+        package = documents['package.json']
         require(package['dependencies'] == lock['packages']['']['dependencies'],
                 'Package and lock dependency declarations disagree')
-        require(versions['server'] == '0.3.0', 'Expected target bundle version 0.3.0')
-        return {'version': versions['server']}
+        return {'version': versions['.claude-plugin/plugin.json']}
     check('versions', versions)
 
     def dependencies():
         require(node, 'Dependency resolution requires a supported Node executable')
-        declarations = documents['mcp-server/package.json']['dependencies']
+        declarations = documents['package.json']['dependencies']
         require(isinstance(declarations, dict) and bool(declarations)
                 and all(isinstance(name, str) and isinstance(value, str)
                         for name, value in declarations.items()),
@@ -246,6 +261,10 @@ console.log(JSON.stringify({missing}));"""
         require(not result['missing'], f'Missing MCP dependencies: {result["missing"]}; install locked dependencies separately')
         return {'dependencies': names, 'scope': 'ESM import target resolution and file existence only; no dependency imports'}
     check('dependencies', dependencies)
+    if (root / 'mcp-server' / 'node_modules').exists():
+        # Node resolves mcp-server/node_modules before the root one.
+        add('stale_server_node_modules', 'warning',
+            'mcp-server/node_modules is left over from the previous layout and shadows the locked root dependencies; remove it')
 
     def environment_root():
         value = os.environ.get('FASTAPI_TOOLS_PLUGIN_ROOT')
@@ -277,7 +296,11 @@ console.log(JSON.stringify({missing}));"""
             require(Path(actual['root']).resolve() == Path(expected['root']).resolve(),
                     f'Workspace discovers {actual["root"]}, intended project discovers {expected["root"]}')
             return {'discovery': actual, 'intendedProject': str(intended)}
-        check('project_discovery', discover)
+        found = check('project_discovery', discover)
+        if found and Path(found['discovery']['root']).resolve() != workspace:
+            # The runtime walks up to the nearest build file; make that visible.
+            add('project_root_above_workspace', 'warning',
+                f'The project root {found["discovery"]["root"]} is an ancestor of the workspace; checks run there')
     else:
         add('project_discovery', 'skipped', 'Use --project PATH to compare workspace and intended project via shared runtime')
     return report(root, workspace, checks)

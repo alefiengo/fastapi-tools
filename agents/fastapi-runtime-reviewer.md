@@ -1,6 +1,6 @@
 ---
 name: fastapi-runtime-reviewer
-description: Review FastAPI sessions, transaction behavior, async I/O, lifecycle and query paths.
+description: Review FastAPI sessions, transaction behavior, async I/O, lifecycle and query paths. Use when FastAPI database sessions, concurrency, lifespan resources or query patterns need an independent read-only review.
 tools: Read, Glob, Grep
 ---
 

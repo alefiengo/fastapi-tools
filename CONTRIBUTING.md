@@ -19,19 +19,24 @@ change their meaning. Maintainer conversations may use the user's language.
 ## Validation
 
 ```bash
-npm ci --prefix mcp-server
+npm ci
 node --check mcp-server/index.js
 python3 -m py_compile runtime/*.py hooks/scripts/hook-runtime.py
-# Use an existing writable temporary directory outside a project/workspace.
+# Project-creating fixtures use TMPDIR (default /var/tmp): choose an existing
+# writable directory outside any Python project/workspace. Runtime state does not use it.
 export TMPDIR=/var/tmp
 bash tests/run-all.sh
-npm audit --prefix mcp-server --omit=dev
+npm audit --omit=dev
 claude plugin validate . --strict
 claude plugin validate skills --strict
 claude plugin validate agents --strict
+claude plugin validate docs/skills --strict
 git diff --check
 ```
 
+package.json and package-lock.json live at the repository root (Claude Code installs
+marketplace dependencies only from the plugin root); mcp-server/package.json only
+marks ESM. Run the suites with Python 3.11 as well when the runtime changes.
 Prepare example dependencies in an isolated environment and run
 `EXAMPLES_PYTHON=/absolute/environment/bin/python bash tests/examples/check.sh`.
 Prepare the real ecosystem fixtures separately:
@@ -55,8 +60,9 @@ actual platform, versions and limitations; do not claim an unrun compatibility m
 
 ## Publication
 
-Align the plugin, marketplace, package, lock and MCP server versions. Include the
-Codex manifest and doctor guard when present. Update catalogs and evidence when
+Align the plugin, marketplace, Codex manifest, root package, lock and MCP server
+versions (`tests/repository` checks them, the metadata fields and the documented
+counts). Update catalogs and evidence when
 components change. Follow docs/releases.md and preserve unrelated work.
 
 GitHub Actions and automatic Dependabot updates are disabled for this repository.

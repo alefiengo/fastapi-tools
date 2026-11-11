@@ -10,12 +10,18 @@ import shutil
 
 from frozen_judge import body, definitions, digest, metrics, seal, validate, verify, write_new
 
+# The plugin copy carries evals/ so `claude plugin eval <copy>` finds the suite; the
+# host hides the eval directory from the agent under test.
 PRODUCT = {'.claude-plugin', '.mcp.json', '.lsp.json', 'agents', 'skills', 'hooks',
-           'runtime', 'mcp-server', 'scripts'}
+           'runtime', 'mcp-server', 'scripts', 'evals'}
+PRODUCT_EXCLUDE = {'evals/results'}
+# Environments, caches and host state are excluded at any depth in both trees.
 EXCLUDE = {'.git', '.claude', '.codex', '.agents', '.fastapi-tools', '.venv', 'venv',
-           'node_modules', '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache',
-           'evals', 'graders', 'reports', 'results', 'docs'}
+           'node_modules', '__pycache__', '.pytest_cache', '.ruff_cache', '.mypy_cache'}
+# Evaluator material inside an application snapshot is refused, never silently dropped.
+EVALUATOR = {'evals', 'graders'}
 INSTRUCTIONS = {'agents.md', 'claude.md', 'gemini.md'}
+CASE_DEFAULTS = {'max_turns': 10, 'timeout_seconds': 300}
 METRICS = ('inputTokens', 'outputTokens', 'costUSD', 'durationMs')
 VARIANTS = ('baseline', 'full', 'selected-minus')
 
@@ -39,10 +45,13 @@ def inventory(root, *, product=False):
             relative = path.relative_to(root)
             if (path.name in EXCLUDE or path.name.lower() in INSTRUCTIONS
                     or path.name.startswith('.env') or path.suffix == '.pyc'
-                    or (product and relative.parts[0] not in PRODUCT)):
+                    or (product and (relative.parts[0] not in PRODUCT
+                                     or relative.as_posix() in PRODUCT_EXCLUDE))):
                 continue
             if path.is_symlink():
                 raise ValueError('Symlink in snapshot: ' + str(relative))
+            if not product and path.is_dir() and path.name in EVALUATOR:
+                raise ValueError('Application snapshot contains evaluation material: ' + relative.as_posix())
             if path.is_dir():
                 walk(path)
             elif path.is_file():
@@ -69,16 +78,31 @@ def ceilings(value=None):
     return value
 
 
-def plan(repo, snapshot, cases, minus, *, model, effort, host_version, canonical_judge,
-         generation_timeout, max_turns, runs=1, metric_ceilings=None):
+def case_limits(prompt):
+    """Read the run limits that `claude plugin eval` takes from prompt.md frontmatter."""
+    text = prompt.read_text()
+    values = dict(CASE_DEFAULTS)
+    if text.startswith('---\n'):
+        for line in text.split('---', 2)[1].splitlines():
+            key, _, value = line.partition(':')
+            if key.strip() in values:
+                values[key.strip()] = int(value.strip())
+    return {'timeoutSeconds': values['timeout_seconds'], 'maxTurns': values['max_turns']}
+
+
+def plan(repo, snapshot, cases, minus, *, model, host_version, canonical_judge,
+         generation_timeout, max_turns, effort=None, runs=1, metric_ceilings=None):
     if repo.is_symlink() or snapshot.is_symlink():
         raise ValueError('Use regular source directories')
     repo, snapshot = repo.resolve(strict=True), snapshot.resolve(strict=True)
     if snapshot == repo or snapshot.is_relative_to(repo) or repo.is_relative_to(snapshot):
         raise ValueError('Use a separate application snapshot outside the plugin tree')
-    for value in (model, effort, host_version, canonical_judge):
+    for value in (model, host_version, canonical_judge):
         if not isinstance(value, str) or not value.strip():
-            raise ValueError('Pin model, effort, host version and canonical judge')
+            raise ValueError('Pin model, host version and canonical judge')
+    # claude plugin eval has no effort option; None records that effort was not controlled.
+    if effort is not None and (not isinstance(effort, str) or not effort.strip()):
+        raise ValueError('Pin effort with a nonempty value or leave it unset')
     if any(type(v) is not int or v < 1 for v in (runs, generation_timeout, max_turns)):
         raise ValueError('Runs and execution limits must be positive integers')
     components = {p.parent.name: p.parent.relative_to(repo).as_posix()
@@ -93,6 +117,8 @@ def plan(repo, snapshot, cases, minus, *, model, effort, host_version, canonical
         case = repo / 'evals' / identifier(name)
         if any(p.is_symlink() for p in (case, case / 'prompt.md', case / 'graders')):
             raise ValueError('Symlinked case input')
+        if case_limits(case / 'prompt.md') != {'timeoutSeconds': generation_timeout, 'maxTurns': max_turns}:
+            raise ValueError('Execution limits must equal the case prompt.md frontmatter: ' + name)
         contexts[name] = {'prompt': body(case / 'prompt.md'), 'criterionDefinitions': definitions(case)}
     project_files, plugin_files = inventory(snapshot), inventory(repo, product=True)
     if not project_files or any(Path(p).parts[0] in PRODUCT for p in project_files):
@@ -278,7 +304,7 @@ def main():
     p.add_argument('--cases', nargs='+', required=True)
     p.add_argument('--minus', nargs='+', required=True)
     p.add_argument('--model', required=True)
-    p.add_argument('--effort', required=True)
+    p.add_argument('--effort', help='Only when the runner controls effort; claude plugin eval cannot')
     p.add_argument('--host-version', required=True)
     p.add_argument('--canonical-judge', required=True)
     p.add_argument('--generation-timeout', type=int, required=True)

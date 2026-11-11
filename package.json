@@ -1,0 +1,20 @@
+{
+  "name": "mcp-fastapi",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Seven FastAPI MCP tools sharing safe initialization, Python discovery, verification locks and pytest reports",
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2.1.1",
+    "fast-xml-parser": "^5.12.0",
+    "zod": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20.3"
+  },
+  "scripts": {
+    "test": "node --test tests/mcp/*.test.js"
+  },
+  "devDependencies": {
+    "yaml": "^2.9.1"
+  }
+}
