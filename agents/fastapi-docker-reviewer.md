@@ -1,6 +1,6 @@
 ---
 name: fastapi-docker-reviewer
-description: Review FastAPI images, Compose, health paths, persistence and deployment CI.
+description: Review FastAPI images, Compose, health paths, persistence and deployment CI. Use when a FastAPI Dockerfile, Compose file or deployment pipeline needs an independent read-only review before release.
 tools: Read, Glob, Grep
 ---
 

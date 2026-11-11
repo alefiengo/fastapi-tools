@@ -5,7 +5,7 @@ description: Validate FastAPI provider/consumer contracts using OpenAPI, Schemat
 
 # Contract Testing for FastAPI
 
-Identify real consumers, the published contract version and the existing tooling. Test the wire contract, not just schema snapshots. Compare generated OpenAPI for path/method removals, required-field additions, narrowed accepted values, response changes and changed security requirements.
+Identify real consumers, the published contract version and the existing tooling. Test the wire contract, not just schema snapshots. Compare generated OpenAPI for path/method removals, required-field additions, narrowed accepted values, response changes and changed security requirements. Schema diffs miss runtime behavior changes from framework upgrades; replay representative requests, including omitted fields, explicit `null` and missing `Content-Type`, when FastAPI or Starlette versions change.
 
 Use Schemathesis only if compatible with the project's installed version and authentication fixtures. Its generated cases supplement domain and ownership tests. Pact provider states must create deterministic isolated data and restore it. Never fake broker publication, verification or deployment approval.
 

@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """Project discovery and coordinated builds, shared by hooks and MCP (stdlib only).
 
-CLI accepts a JSON object on stdin and returns JSON on stdout. Build subprocesses
-inherit the CLI process group so an MCP cancellation terminates the whole group.
+CLI accepts a JSON object on stdin and returns JSON on stdout. Builds run in
+their own session under a supervisor that kills the whole group on
+cancellation, timeout or loss of its parent.
 """
 import ast
 import configparser
 import fcntl
+import fnmatch
+import grp
 import hashlib
 import json
 import os
 from pathlib import Path
+import pwd
 import re
+import secrets
 import selectors
 import shutil
 import signal
@@ -21,6 +26,13 @@ import sys
 import tempfile
 import time
 import tomllib
+
+# Isolated interpreters (-I) do not prepend the script directory.
+_RUNTIME_DIR = str(Path(__file__).resolve().parent)
+if _RUNTIME_DIR not in sys.path:
+    sys.path.insert(0, _RUNTIME_DIR)
+from source_inventory import ignored_directory, read_regular, source_files  # noqa: E402
+
 
 class BuildCancelled(RuntimeError):
     pass
@@ -33,43 +45,74 @@ class DiscoveryError(ValueError):
 
 
 BUILD_FILES = ('pyproject.toml', 'requirements.txt', 'setup.cfg', 'setup.py')
-INVOCATION_ENV = {'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_SESSION_ID', 'CODEX_THREAD_ID', 'MCP_SERVER_NAME', 'PROJECT_ROOT', 'PWD', 'OLDPWD', 'SHLVL', '_'}
-IGNORED = {'.git', 'node_modules', '.venv', 'venv', 'dist', 'build', '__pycache__', '.idea', '.vscode', '.pytest_cache', '.ruff_cache', '.mypy_cache', '.fastapi-tools', 'htmlcov'}
+LOCK_FILES = ('uv.lock', 'poetry.lock')
+FASTAPI_DISTRIBUTIONS = {'fastapi', 'fastapi-slim'}
+# Variables that identify an invocation or a host adapter, not build inputs.
+INVOCATION_ENV = {'CLAUDE_PROJECT_DIR', 'CLAUDE_PLUGIN_ROOT', 'CLAUDE_PLUGIN_DATA', 'CLAUDE_SESSION_ID', 'CLAUDE_ENV_FILE',
+                  'CODEX_THREAD_ID', 'MCP_SERVER_NAME', 'PROJECT_ROOT', 'FASTAPI_APP_PORT', 'PWD', 'OLDPWD', 'SHLVL', '_'}
+INVOCATION_PREFIXES = ('CLAUDE_PLUGIN_', 'FASTAPI_TOOLS_')
+# Files that tests and applications commonly write while checks run.
+GENERATED_FILES = ('.coverage', '.coverage.*', 'coverage.xml', '*.log', '*.db', '*.db-journal', '*.db-wal', '*.db-shm',
+                   '*.sqlite', '*.sqlite-journal', '*.sqlite-wal', '*.sqlite-shm',
+                   '*.sqlite3', '*.sqlite3-journal', '*.sqlite3-wal', '*.sqlite3-shm')
 TASKS = {'compile', 'lint', 'typecheck', 'test', 'verify', 'package', 'dependencies', 'migration-status'}
+TEST_PATH = re.compile(r'[A-Za-z0-9_./-]+(?:::[A-Za-z_][A-Za-z0-9_]*)*(?:::[A-Za-z_][A-Za-z0-9_]*\[[^\x00-\x1f\x7f]{0,512}\])?')
 
 
 def build_file(folder):
     return next((name for name in BUILD_FILES if (folder / name).is_file()), None)
 
 
-def read_regular(path, limit=8 * 1024 * 1024):
-    """Bound static reads, reject symlinks/FIFOs/devices without blocking."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(fd, 'rb') as source:
-        metadata = os.fstat(source.fileno())
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
-            raise ValueError(f'Unsafe or oversized input: {path}')
-        content = source.read(limit + 1)
-        if len(content) > limit:
-            raise ValueError(f'Input exceeds safety limit: {path}')
-        return content
+def find_root(location):
+    """Nearest folder with a build file; static helper without trust checks."""
+    location = Path(location).resolve()
+    folder = location if location.is_dir() else location.parent
+    return next((p for p in (folder, *folder.parents) if build_file(p)), None)
 
 
-def source_files(root):
-    count, total = 0, 0
-    def walk_error(error):
-        raise error
-    for folder, directories, filenames in os.walk(root, followlinks=False, onerror=walk_error):
-        directories[:] = sorted(d for d in directories if not ignored_directory(Path(folder) / d, root) and not (Path(folder) / d).is_symlink())
-        for name in sorted(filenames):
-            file = Path(folder) / name
-            if file.suffix == '.py' and not file.is_symlink():
-                metadata = file.stat()
-                count += 1
-                total += metadata.st_size
-                if not stat.S_ISREG(metadata.st_mode) or count > 50000 or total > 128 * 1024 * 1024:
-                    raise ValueError('Python source inventory exceeds safety limit or contains nonregular files')
-                yield file
+def private_group(gid):
+    """The user's own primary group with no other members (umask 002 setups)."""
+    try:
+        account = pwd.getpwuid(os.getuid())
+        group = grp.getgrgid(gid)
+    except KeyError:
+        return False
+    return gid == account.pw_gid and group.gr_name == account.pw_name and set(group.gr_mem) <= {account.pw_name}
+
+
+def writable_by_others(info):
+    return bool(info.st_mode & stat.S_IWOTH or (info.st_mode & stat.S_IWGRP and not private_group(info.st_gid)))
+
+
+def trusted_entry(path, label):
+    """An entry another local user could have planted or can rewrite is refused."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if info.st_uid not in (os.getuid(), 0) or (not stat.S_ISLNK(info.st_mode) and writable_by_others(info)):
+        raise DiscoveryError(f'Refusing untrusted {label}: {path} is owned by another user or writable by others')
+    if stat.S_ISLNK(info.st_mode):
+        target = Path(path).resolve()
+        if target.exists():
+            trusted_entry(target, label + ' target')
+
+
+def check_trust(root, requested):
+    """The requested folder is the user's choice. A build file found in an
+    ancestor, and anything executed from it, must belong to the user."""
+    if writable_by_others(os.lstat(root)):
+        # Includes sticky shared directories such as /tmp and shared group
+        # directories: other users can plant files there.
+        raise DiscoveryError(f'Refusing project root writable by other users: {root}')
+    if root == requested:
+        return
+    trusted_entry(root, 'ancestor project directory')
+    for name in (*BUILD_FILES, *LOCK_FILES, '.venv', 'venv'):
+        trusted_entry(root / name, 'ancestor project file')
+    for environment in ('.venv', 'venv'):
+        trusted_entry(root / environment / 'bin', 'ancestor environment')
+        trusted_entry(root / environment / 'bin' / 'python', 'ancestor interpreter')
 
 
 def ini_config(file):
@@ -82,9 +125,13 @@ def ini_config(file):
     return parser
 
 
-def project_metadata(root):
+def pyproject(root):
     config = root / 'pyproject.toml'
-    data = tomllib.loads(read_regular(config).decode('utf-8')) if config.exists() or config.is_symlink() else {}
+    return tomllib.loads(read_regular(config).decode('utf-8')) if config.exists() or config.is_symlink() else {}
+
+
+def project_metadata(root):
+    data = pyproject(root)
     try:
         project, tools = data.get('project', {}), data.get('tool', {})
         dependencies = list(project.get('dependencies', []))
@@ -112,6 +159,7 @@ def project_metadata(root):
             match = re.match(r'([A-Za-z0-9][A-Za-z0-9._-]*)', dep)
             if match:
                 names.add(re.sub(r'[-_.]+', '-', match[1]).lower())
+        names.discard('python')  # Poetry declares the interpreter as a dependency.
         checks = {name for name in ('ruff', 'mypy', 'pytest') if name in tools or name in names}
         if any((root / name).exists() or (root / name).is_symlink() for name in ('ruff.toml', '.ruff.toml')):
             checks.add('ruff')
@@ -120,8 +168,10 @@ def project_metadata(root):
         if (any((root / name).exists() or (root / name).is_symlink() for name in ('pytest.ini', '.pytest.ini', 'pytest.toml', '.pytest.toml'))
                 or setup.has_section('tool:pytest') or ini_config(root / 'tox.ini').has_section('pytest')):
             checks.add('pytest')
-        fastapi = 'fastapi' in names
-        if not fastapi:
+        fastapi = bool(names & FASTAPI_DISTRIBUTIONS)
+        if not fastapi and not names:
+            # Only undeclared projects need source evidence; a project that
+            # declares other dependencies is not scanned on every edit.
             fastapi = fastapi_import_evidence(root)
         return {'name': project.get('name') or poetry.get('name') or setup.get('metadata', 'name', fallback=None),
                 'requiresPython': project.get('requires-python') or setup.get('options', 'python_requires', fallback=None),
@@ -131,12 +181,37 @@ def project_metadata(root):
 
 
 def fastapi_import_evidence(root):
-    """Fallback evidence when metadata cannot be parsed; never import the app."""
+    """Fallback evidence when metadata is absent or invalid; never import the app."""
     for file in source_files(root):
         if re.search(r'(?m)^\s*(?:from\s+fastapi\b|import\s+fastapi\b)',
                      read_regular(file).decode('utf-8', 'replace')):
             return True
     return False
+
+
+def uv_workspace(root, requested):
+    """An enclosing uv workspace owns the lockfile and environment of members."""
+    for parent in root.parents:
+        if (parent / 'uv.lock').is_file() and (parent / 'pyproject.toml').is_file():
+            check_trust(parent, requested)
+            try:
+                tool = pyproject(parent).get('tool', {})
+            except (OSError, ValueError):
+                return None
+            if isinstance(tool, dict) and isinstance(tool.get('uv'), dict) and 'workspace' in tool['uv']:
+                return parent
+            return None
+        if build_file(parent):
+            return None
+    return None
+
+
+def environment_python(root):
+    candidates = [root / '.venv' / 'bin' / 'python', root / 'venv' / 'bin' / 'python']
+    active = os.environ.get('VIRTUAL_ENV')
+    if active and Path(active).resolve().is_relative_to(root):
+        candidates.append(Path(active) / 'bin' / 'python')
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
 def discover(location):
@@ -145,6 +220,7 @@ def discover(location):
     root = next((p for p in (folder, *folder.parents) if build_file(p)), None)
     if root is None:
         raise ValueError(f'No Python project found from {location}; expected pyproject.toml or requirements.txt')
+    check_trust(root, folder)
     try:
         metadata = project_metadata(root)
     except (OSError, ValueError, TypeError) as error:
@@ -156,10 +232,20 @@ def discover(location):
     if (root / 'uv.lock').is_file() and (root / 'poetry.lock').is_file():
         raise DiscoveryError('Ambiguous Python managers: both uv.lock and poetry.lock exist; select one explicitly in the project',
                              is_fastapi=metadata['isFastAPI'])
-    tool = 'uv' if (root / 'uv.lock').is_file() else ('poetry' if (root / 'poetry.lock').is_file() else 'python')
-    python = root / '.venv' / 'bin' / 'python'
+    workspace = None
+    if (root / 'uv.lock').is_file():
+        tool = 'uv'
+    elif (root / 'poetry.lock').is_file():
+        tool = 'poetry'
+    else:
+        workspace = uv_workspace(root, folder)
+        tool = 'uv' if workspace else 'python'
+    environment_root = workspace or root
+    python = environment_python(environment_root)
     return dict(metadata, root=str(root), buildTool=tool, buildFile=build_file(root),
-                python=str(python) if python.is_file() else sys.executable,
+                python=str(python) if python else sys.executable,
+                environment=str(python.parent.parent) if python else None,
+                workspaceRoot=str(workspace) if workspace else None,
                 modules=[], discoveryScope='Nearest Python project; dependencies are declarations, not resolved installations')
 
 
@@ -168,9 +254,31 @@ def python_command(info):
         tool = shutil.which(info['buildTool'])
         if not tool:
             raise ValueError(f"{info['buildTool']} is required by the project lockfile but is unavailable")
-        # Never install or synchronize dependencies as a side effect of a check.
-        return [tool, 'run', '--frozen', '--offline', '--no-sync', 'python'] if info['buildTool'] == 'uv' else [tool, 'run', 'python']
+        if info['buildTool'] == 'uv':
+            if not info.get('environment') and not os.environ.get('UV_PROJECT_ENVIRONMENT'):
+                # uv run would create an empty environment as a side effect.
+                expected = Path(info.get('workspaceRoot') or info['root']) / '.venv'
+                raise ValueError(f'uv project environment is missing ({expected}); create it explicitly (for example uv sync) before checks')
+            # Never install or synchronize dependencies as a side effect of a check.
+            return [tool, 'run', '--frozen', '--offline', '--no-sync', 'python']
+        return [tool, 'run', 'python']
     return [info['python']]
+
+
+def mypy_configured_targets(root):
+    """mypy treats command-line paths as overriding files/packages/modules."""
+    keys = ('files', 'packages', 'modules')
+    try:
+        section = pyproject(root).get('tool', {}).get('mypy', {})
+    except AttributeError:
+        section = {}
+    if isinstance(section, dict) and any(section.get(key) for key in keys):
+        return True
+    for name, header in (('mypy.ini', 'mypy'), ('.mypy.ini', 'mypy'), ('setup.cfg', 'mypy')):
+        parser = ini_config(root / name)
+        if parser.has_section(header) and any(parser.get(header, key, fallback='').strip() for key in keys):
+            return True
+    return False
 
 
 def build_plan(request):
@@ -185,46 +293,50 @@ def build_plan(request):
         raise ValueError('Python checks use the nearest project root; module/profile selectors are unsupported')
     selection = request.get('testPath')
     if selection is not None:
-        if task != 'test' or not isinstance(selection, str) or not re.fullmatch(r'[A-Za-z0-9_./-]+(?:\:\:[A-Za-z_][A-Za-z0-9_]*)*', selection):
-            raise ValueError('testPath must be a relative pytest file/directory, optionally ::class::test')
-        file = (Path(info['root']) / selection.split('::')[0]).resolve()
-        if not file.is_relative_to(Path(info['root'])) or not file.exists() or selection.startswith('-') or Path(selection.split('::')[0]).is_absolute():
+        # One argv element (never a shell), so pytest parameter IDs are safe;
+        # options and paths outside the project are refused.
+        if task != 'test' or not isinstance(selection, str) or selection.startswith('-') or not TEST_PATH.fullmatch(selection):
+            raise ValueError('testPath must be a relative pytest file/directory, optionally ::class::test or ::test[parameter-id]')
+        path = selection.split('::')[0]
+        file = (Path(info['root']) / path).resolve()
+        if Path(path).is_absolute() or not file.is_relative_to(Path(info['root'])) or not file.exists():
             raise ValueError('testPath must exist inside the project root')
     required = {'lint': 'ruff', 'typecheck': 'mypy', 'test': 'pytest'}.get(task)
     if required and required not in info['checks']:
         raise ValueError(f'{required} is not declared or configured in this project')
     runner = python_command(info)
     runtime = str(Path(__file__).resolve())
-    compile_command = [*runner, runtime, '--syntax', info['root']]
+    syntax = str(Path(__file__).resolve().parent / 'source_inventory.py')
+    root = Path(info['root'])
+    # -I -S: the application's interpreter runs plugin code without PYTHONPATH,
+    # the script directory, site or .pth files (available since Python 3.4).
+    compile_command = [*runner, '-I', '-S', syntax, '--syntax', info['root']]
     lint_command = [*runner, '-m', 'ruff', 'check', '.']
-    type_command = [*runner, '-m', 'mypy', '.']
+    type_command = [*runner, '-m', 'mypy', *([] if mypy_configured_targets(root) else ['.'])]
     tests = [*runner, '-m', 'pytest', '--junitxml=.fastapi-tools/pytest.xml', *([selection] if selection else [])]
     if task == 'verify':
-        commands = [compile_command]
+        steps = [compile_command]
         if 'ruff' in info['checks']:
-            commands.append(lint_command)
+            steps.append(lint_command)
         if 'mypy' in info['checks']:
-            commands.append(type_command)
+            steps.append(type_command)
         if 'pytest' in info['checks']:
-            commands.append(tests)
-        command = [sys.executable, runtime, '--checks', json.dumps(commands)]
+            steps.append(tests)
+        command = [sys.executable, runtime, '--checks', json.dumps(steps)]
     else:
         command = {'compile': compile_command, 'lint': lint_command, 'typecheck': type_command, 'test': tests,
                    'package': [*runner, '-m', 'build', '--no-isolation'],
                    'dependencies': [*runner, '-c', 'import importlib.metadata as m, json; print(json.dumps(sorted([{"name": d.metadata["Name"], "version": d.version} for d in m.distributions()], key=lambda d: d["name"].lower())))'],
                    'migration-status': [*runner, '-m', 'alembic', 'current']}[task]
-    return dict(info, command=command, tasks=[task], profiles=[], module=None, testClass=None, testPath=selection)
+        steps = [command]
+    return dict(info, command=command, steps=steps, tasks=[task], profiles=[], module=None, testClass=None, testPath=selection)
 
 
-def ignored_directory(path, root):
-    if path.name in ('build', 'dist') and ('src' in path.relative_to(root).parts or (path / '__init__.py').is_file()):
-        return False
-    return path.name in IGNORED or path.name.endswith('.egg-info')
-
-
-def relevant(path, root):
+def relevant(path, root, excluded=()):
     relative = path.relative_to(root)
-    if path.name == '.coverage' or path.name.startswith('.coverage.'):
+    if any(fnmatch.fnmatchcase(path.name, pattern) for pattern in GENERATED_FILES):
+        return False
+    if any(fnmatch.fnmatchcase(relative.as_posix(), pattern) for pattern in excluded):
         return False
     if any(ignored_directory(root / Path(*relative.parts[:index + 1]), root) for index in range(len(relative.parts) - 1)):
         return False
@@ -233,61 +345,206 @@ def relevant(path, root):
     return 'src' in relative.parts or path.suffix.lower() not in ('.md', '.rst', '.adoc')
 
 
-def fingerprint(root):
+def fingerprint_exclusions(root):
+    """Optional [tool.fastapi-tools] fingerprint-exclude glob patterns."""
+    try:
+        section = pyproject(root).get('tool', {}).get('fastapi-tools', {})
+    except AttributeError:
+        section = {}
+    patterns = section.get('fingerprint-exclude', []) if isinstance(section, dict) else []
+    if (not isinstance(patterns, list) or len(patterns) > 100
+            or not all(isinstance(item, str) and 0 < len(item) <= 256 for item in patterns)):
+        raise ValueError('tool.fastapi-tools.fingerprint-exclude must be a list of at most 100 glob strings')
+    return tuple(patterns)
+
+
+def build_environment():
+    return {key: value for key, value in os.environ.items()
+            if key not in INVOCATION_ENV and not key.startswith(INVOCATION_PREFIXES)}
+
+
+def environment_identity(environment):
+    """Cheap identity of the selected environment: pyvenv.cfg plus installed
+    distribution names (with versions), so `uv sync` or a reinstall that
+    changes them invalidates reuse and remembered failures."""
+    if not environment:
+        return [sys.executable]
+    folder = Path(environment)
+    identity = []
+    try:
+        identity.append(read_regular(folder / 'pyvenv.cfg', 64 * 1024).decode('utf-8', 'replace'))
+    except (OSError, ValueError):
+        identity.append(None)
+    for site in sorted(folder.glob('lib/python*/site-packages')) + sorted(folder.glob('Lib/site-packages')):
+        try:
+            with os.scandir(site) as entries:
+                names = sorted(entry.name for entry in entries
+                               if entry.name.endswith(('.dist-info', '.egg-info', '.egg-link', '.pth')))
+        except OSError:
+            names = None
+        identity.append([str(site.relative_to(folder)), names[:20000] if names else names])
+    return identity
+
+
+def fingerprint(root, environment=None):
     root = Path(root)
+    excluded = fingerprint_exclusions(root)
     digest = hashlib.sha256(Path(__file__).read_bytes())
+    digest.update(Path(__file__).with_name('source_inventory.py').read_bytes())
     count, total = 0, 0
-    environment = {key: value for key, value in os.environ.items() if key not in INVOCATION_ENV}
+    variables = build_environment()
+    limit = 128 * 1024 * 1024
+
+    def internal_target(path):
+        # Links inside the project are inputs; external or dangling links are
+        # uninspected sources and never count as verified.
+        target = path.resolve()
+        if not target.exists():
+            raise ValueError(f'Cannot fingerprint dangling symlinked build input: {path}')
+        if not target.is_relative_to(root):
+            raise ValueError(f'Cannot fingerprint symlinked build input outside the project: {path}')
+        return target
+
+    def skipped_location(target):
+        """True when the walk never visits target in place (ignored/excluded)."""
+        parts = target.relative_to(root).parts
+        for index in range(len(parts)):
+            prefix = root / Path(*parts[:index + 1])
+            if prefix.is_dir() and (ignored_directory(prefix, root)
+                                    or any(fnmatch.fnmatchcase(prefix.relative_to(root).as_posix(), p) for p in excluded)):
+                return True
+        return False
+
+    def record(kind, relative, content=b''):
+        digest.update(kind + len(relative).to_bytes(8, 'big') + relative)
+        digest.update(len(content).to_bytes(8, 'big') + content)
+
+    def add_file(source, relative):
+        nonlocal count, total
+        metadata = source.stat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f'Cannot fingerprint nonregular build input: {source}')
+        if metadata.st_size + total > limit:
+            raise ValueError('Build input fingerprint exceeds safety limit; verification will run without reuse')
+        content = read_regular(source, limit - total)
+        digest.update((metadata.st_mode & 0o777).to_bytes(8, 'big'))
+        total += len(content)
+        count += 1
+        if total > limit or count > 50000:
+            raise ValueError('Build input fingerprint exceeds safety limit; verification will run without reuse')
+        for variable in re.findall(rb'\$\{([A-Za-z_][A-Za-z0-9_]*)', content):
+            key = variable.decode()
+            if key not in INVOCATION_ENV and not key.startswith(INVOCATION_PREFIXES):
+                variables[key] = os.environ.get(key)
+        record(b'F', relative, content)
+
+    def add_linked_directory(target, link):
+        # The target is not walked in place, so its contents are hashed here,
+        # under the link's name. Nested links stay uninspected.
+        for folder, directories, filenames in os.walk(target, followlinks=False, onerror=walk_error):
+            for name in directories:
+                if (Path(folder) / name).is_symlink():
+                    raise ValueError(f'Cannot fingerprint nested symlink in linked directory: {Path(folder) / name}')
+            directories.sort()
+            for name in sorted(filenames):
+                path = Path(folder) / name
+                if path.is_symlink():
+                    raise ValueError(f'Cannot fingerprint nested symlink in linked directory: {path}')
+                if any(fnmatch.fnmatchcase(name, pattern) for pattern in GENERATED_FILES):
+                    continue
+                add_file(path, (link + '/' + path.relative_to(target).as_posix()).encode())
+
     def walk_error(error):
         raise error
     for folder, directories, filenames in os.walk(root, followlinks=False, onerror=walk_error):
-        for name in directories:
-            if not ignored_directory(Path(folder) / name, root) and (Path(folder) / name).is_symlink():
-                raise ValueError(f'Cannot fingerprint symlinked build directory: {Path(folder) / name}')
-        directories[:] = sorted(d for d in directories if not ignored_directory(Path(folder) / d, root) and not (Path(folder) / d).is_symlink())
-        for name in sorted(filenames):
+        kept = []
+        for name in sorted(directories):
             path = Path(folder) / name
-            if not relevant(path, root):
+            relative = path.relative_to(root).as_posix()
+            if ignored_directory(path, root) or any(fnmatch.fnmatchcase(relative, pattern) for pattern in excluded):
                 continue
             if path.is_symlink():
-                # Avoid treating uninspected external sources as verified.
-                raise ValueError(f'Cannot fingerprint symlinked build input: {path}')
-            metadata = path.stat()
-            if not stat.S_ISREG(metadata.st_mode):
-                raise ValueError(f'Cannot fingerprint nonregular build input: {path}')
-            if metadata.st_size + total > 128 * 1024 * 1024:
-                raise ValueError('Build input fingerprint exceeds safety limit; verification will run without reuse')
-            content = read_regular(path, 128 * 1024 * 1024 - total)
-            digest.update((metadata.st_mode & 0o777).to_bytes(8, 'big'))
-            total += len(content)
-            count += 1
-            if total > 128 * 1024 * 1024 or count > 50000:
-                raise ValueError('Build input fingerprint exceeds safety limit; verification will run without reuse')
+                target = internal_target(path)
+                record(b'D', relative.encode(), target.relative_to(root).as_posix().encode())
+                if skipped_location(target):
+                    add_linked_directory(target, relative)
+                continue
+            kept.append(name)
+        directories[:] = kept
+        for name in sorted(filenames):
+            path = Path(folder) / name
+            if not relevant(path, root, excluded):
+                continue
             relative = path.relative_to(root).as_posix().encode()
-            for variable in re.findall(rb'\$\{([A-Za-z_][A-Za-z0-9_]*)', content):
-                key = variable.decode()
-                environment[key] = os.environ.get(key)
-            digest.update(len(relative).to_bytes(8, 'big') + relative)
-            digest.update(len(content).to_bytes(8, 'big') + content)
-    digest.update(json.dumps(environment, sort_keys=True).encode())
+            source = path
+            if path.is_symlink():
+                source = internal_target(path)
+                record(b'L', relative, source.relative_to(root).as_posix().encode())
+            add_file(source, relative)
+    digest.update(json.dumps(variables, sort_keys=True).encode())
+    digest.update(json.dumps(environment_identity(environment)).encode())
     return digest.hexdigest()
 
 
-def state_dir(root):
-    key = hashlib.sha256(str(Path(root).resolve()).encode()).hexdigest()
-    folder = Path(tempfile.gettempdir()) / f'fastapi-tools-build-{os.getuid()}-{key}'
+def private_directory(folder):
     try:
         folder.mkdir(mode=0o700)
     except FileExistsError:
         pass
     info = folder.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-        raise ValueError('Unsafe shared build state directory')
+        raise ValueError(f'Unsafe build state directory: {folder} must be a private 0700 directory of the current user')
     return folder
 
 
-def state_read(folder):
-    path = folder / 'state.json'
+STATE_NOTICE = []  # Visible diagnostic when the temporary fallback is in use.
+
+
+def owned_private_directory(path, label):
+    info = os.stat(path)  # Follows a symlinked ~/.cache to its real directory.
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or writable_by_others(info):
+        raise ValueError(f'{label} is not a directory of the current user that only they can write')
+
+
+def state_base():
+    """Per-user state independent of TMPDIR/HOME/XDG, which hosts can vary.
+
+    FASTAPI_TOOLS_STATE_HOME is an explicit override for isolated runs. A
+    private temporary fallback is used only without a usable home directory,
+    and is reported because processes with different TMPDIR do not share it.
+    """
+    override = os.environ.get('FASTAPI_TOOLS_STATE_HOME')
+    if override:
+        if not os.path.isabs(override):
+            raise ValueError('FASTAPI_TOOLS_STATE_HOME must be an absolute path')
+        return private_directory(Path(override))
+    try:
+        home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+        owned_private_directory(home, 'The home directory')
+        cache = home / '.cache'
+        try:
+            cache.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+        # ~/.cache may be a symlink; its resolved target must be the user's own.
+        owned_private_directory(cache, '~/.cache')
+    except (KeyError, OSError, ValueError) as error:
+        base = private_directory(Path(tempfile.gettempdir()) / f'fastapi-tools-{os.getuid()}')
+        notice = (f'Runtime state uses the temporary fallback {base} ({error}); processes with a different TMPDIR '
+                  'do not share its locks or results. Set FASTAPI_TOOLS_STATE_HOME or fix ~/.cache.')
+        if notice not in STATE_NOTICE:
+            STATE_NOTICE.append(notice)
+        return base
+    return private_directory(cache / 'fastapi-tools')
+
+
+def state_dir(root):
+    key = hashlib.sha256(str(Path(root).resolve()).encode()).hexdigest()
+    return private_directory(state_base() / f'build-{key}')
+
+
+def state_read(folder, name='state.json'):
+    path = folder / name
     try:
         content = read_regular(path, 1024 * 1024)
     except FileNotFoundError:
@@ -299,19 +556,19 @@ def state_read(folder):
         return {}
 
 
-def state_write(folder, data):
+def state_write(folder, data, name='state.json'):
     handle, temporary = tempfile.mkstemp(prefix='state-', dir=folder)
     try:
         with os.fdopen(handle, 'w') as output:
             json.dump(data, output)
-        os.replace(temporary, folder / 'state.json')
+        os.replace(temporary, folder / name)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
 
 
-def acquire(folder, deadline):
-    lock = folder / 'build.lock'
+def acquire(folder, deadline, name='build.lock'):
+    lock = folder / name
     handle = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
     metadata = os.fstat(handle)
     if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
@@ -326,41 +583,19 @@ def acquire(folder, deadline):
                 return stream
             except BlockingIOError:
                 if time.monotonic() >= deadline:
-                    raise TimeoutError('Timed out waiting for the project build lock')
+                    raise TimeoutError(f'Timed out waiting for the project {name}')
                 time.sleep(.05)
     except BaseException:
         stream.close()
         raise
 
 
-def terminate(process, own_group):
-    if own_group:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    else:
-        # CLI must remain in its caller's group. Kill its build descendants only.
-        try:
-            listing = subprocess.run(['ps', '-eo', 'pid=,ppid=,pgid='], capture_output=True, text=True, timeout=2).stdout
-            rows = [tuple(map(int, line.split())) for line in listing.splitlines() if len(line.split()) == 3]
-            pairs = [(pid, parent) for pid, parent, group in rows]
-            ids = {process.pid}
-            if os.getpgrp() == os.getpid():
-                ids |= {pid for pid, parent, group in rows if group == os.getpgrp() and pid != os.getpid()}
-            while True:
-                children = {pid for pid, parent in pairs if parent in ids}
-                if children <= ids:
-                    break
-                ids |= children
-            for pid in sorted(ids, reverse=True):
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-        finally:
-            if process.poll() is None:
-                process.kill()
+def terminate(process):
+    # The supervisor leads its own session: one signal reaches every descendant.
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
     process.wait()
 
 
@@ -378,7 +613,10 @@ def test_report_snapshot(root):
     return {str(file): ((metadata.st_mtime_ns, metadata.st_ctime_ns, metadata.st_size), content.decode('utf-8', 'replace'))}
 
 
-def run_build(request, own_process_group=False):
+CANCEL_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def run_build(request):
     plan = build_plan(request)
     timeout = request.get('timeoutMs', 300000)
     limit = request.get('maxOutputBytes', 4 * 1024 * 1024)
@@ -406,17 +644,28 @@ def run_build(request, own_process_group=False):
                     raise ValueError('Unsafe test report path')
         cache_diagnostic = None
         try:
-            before = fingerprint(plan['root'])
+            before = fingerprint(plan['root'], plan.get('environment'))
         except (OSError, ValueError) as error:
             before, cache_diagnostic = None, str(error)
         state = state_read(folder)
-        verification = plan['tasks'] in (['verify'], ['check'])
+        verification = plan['tasks'] == ['verify']
         scope = json.dumps([plan['buildTool'], plan['tasks'], plan['profiles'], plan['module'], plan['testPath']], separators=(',', ':'))
         scopes = state.get('verifiedScopes', {})
         if not isinstance(scopes, dict):
             scopes = {}
+        attempts = state.get('lastAttempts', {})
+        if not isinstance(attempts, dict):
+            attempts = {}
+        previous = attempts.get(scope) if isinstance(attempts.get(scope), dict) else None
+        previous_fingerprint = previous.get('fingerprint') if previous else None
+        changed = previous_fingerprint is not None and before is not None and before != previous_fingerprint
+        history = {'hadPreviousAttempt': previous is not None, 'changedSinceLastAttempt': changed}
         if before is not None and request.get('reuse', True) and verification and scopes.get(scope) == before:
-            return dict(plan, ok=True, exitCode=0, stdout='', stderr='', reused=True, fingerprint=before, timedOut=False, outputLimitExceeded=False, inputsChanged=False, cacheable=True, cacheDiagnostic=None, durationMs=round((time.monotonic() - start) * 1000))
+            return dict(plan, **history, ok=True, exitCode=0, stdout='', stderr='', reused=True, fingerprint=before, timedOut=False, outputLimitExceeded=False, inputsChanged=False, cacheable=True, cacheDiagnostic=None, durationMs=round((time.monotonic() - start) * 1000))
+        if (request.get('skipUnchangedFailure') and verification and before is not None
+                and previous and previous.get('ok') is False and previous_fingerprint == before):
+            # The same inputs already failed; report it without rerunning.
+            return dict(plan, **history, ok=False, unchangedFailure=True, exitCode=previous.get('exitCode', 1), stdout='', stderr='', reused=True, fingerprint=before, timedOut=False, outputLimitExceeded=False, inputsChanged=False, cacheable=True, cacheDiagnostic=None, durationMs=round((time.monotonic() - start) * 1000))
         # Any build attempt invalidates previous success; failure/cancellation cannot
         # preserve a stale verification after clean or other mutating build tasks.
         state.pop('verifiedScopes', None)
@@ -428,27 +677,29 @@ def run_build(request, own_process_group=False):
         previous_handlers = {}
         deferred_signal = []
         try:
-            if own_process_group:
-                # Record cancellation during Popen/pipe setup, when ownership of
-                # the child is not yet available for cleanup. Do not block OS
-                # signals: children must inherit the ordinary signal mask.
-                def defer(signum, frame):
-                    deferred_signal.append(signum)
-                for signum in (signal.SIGTERM, signal.SIGINT):
-                    previous_handlers[signum] = signal.signal(signum, defer)
-            process = subprocess.Popen(plan['command'], cwd=plan['root'], stdin=subprocess.DEVNULL,
-                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=own_process_group,
+            # Record cancellation during Popen/pipe setup, when ownership of
+            # the child is not yet available for cleanup. Do not block OS
+            # signals: children must inherit the ordinary signal mask.
+            def defer(signum, frame):
+                deferred_signal.append(signum)
+            for signum in CANCEL_SIGNALS:
+                previous_handlers[signum] = signal.signal(signum, defer)
+            # -I -S: plugin code ignores PYTHON* variables, site and .pth files;
+            # the checks themselves inherit the environment unchanged.
+            supervised = [sys.executable, '-I', '-S', str(Path(__file__).resolve()), '--checks', json.dumps(plan['steps']), str(os.getpid())]
+            process = subprocess.Popen(supervised, cwd=plan['root'], stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
                                        env=dict(os.environ, POETRY_VIRTUALENVS_CREATE='false'))
             selector = selectors.DefaultSelector()
             for name in outputs:
                 selector.register(getattr(process, name), selectors.EVENT_READ, name)
-            if own_process_group:
-                def interrupted(signum, frame):
-                    raise BuildCancelled(f'Build cancelled by signal {signum}')
-                for signum in previous_handlers:
-                    signal.signal(signum, interrupted)
-                if deferred_signal:
-                    raise BuildCancelled(f'Build cancelled by signal {deferred_signal[0]}')
+
+            def interrupted(signum, frame):
+                raise BuildCancelled(f'Build cancelled by signal {signum}')
+            for signum in previous_handlers:
+                signal.signal(signum, interrupted)
+            if deferred_signal:
+                raise BuildCancelled(f'Build cancelled by signal {deferred_signal[0]}')
             while selector.get_map():
                 if time.monotonic() >= deadline:
                     timed_out = True
@@ -467,27 +718,31 @@ def run_build(request, own_process_group=False):
                 if too_large:
                     break
             if timed_out or too_large:
-                terminate(process, own_process_group)
+                terminate(process)
             else:
                 try:
                     process.wait(timeout=max(.001, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired:
                     timed_out = True
-                    terminate(process, own_process_group)
+                    terminate(process)
             try:
-                after = fingerprint(plan['root'])
+                after = fingerprint(plan['root'], plan.get('environment'))
             except (OSError, ValueError) as error:
                 after, cache_diagnostic = None, str(error)
             verification_incomplete = verification and (before is None or after is None)
             ok = process.returncode == 0 and not timed_out and not too_large and not verification_incomplete
+            if verification:
+                # Remember only a definite result for inputs that stayed the same.
+                # Timeouts, output limits, uninspectable or changing inputs and
+                # cancellations say nothing reusable about these inputs.
+                definite = (before is not None and before == after and not timed_out and not too_large)
+                if definite:
+                    state['lastAttempts'] = {scope: {'fingerprint': before, 'ok': ok, 'exitCode': process.returncode}}
+                else:
+                    state.pop('lastAttempts', None)
             if ok and verification and before is not None and before == after:
                 state['verifiedScopes'] = {scope: after}
-                state.pop('pendingFingerprint', None)
-                state_write(folder, state)
-                try:
-                    (folder / 'pending.json').unlink()
-                except FileNotFoundError:
-                    pass
+            state_write(folder, state)
             report_result = {}
             if collect_reports:
                 try:
@@ -498,7 +753,7 @@ def run_build(request, own_process_group=False):
                 except (OSError, ValueError) as error:
                     ok = False
                     report_result = {'testReports': [], 'testReportErrors': [str(error)]}
-            return dict(plan, **report_result, ok=ok, exitCode=process.returncode, **{name: bytes(value).decode('utf-8', 'replace') for name, value in outputs.items()},
+            return dict(plan, **history, **report_result, ok=ok, exitCode=process.returncode, **{name: bytes(value).decode('utf-8', 'replace') for name, value in outputs.items()},
                         reused=False, verificationIncomplete=verification_incomplete, durationMs=round((time.monotonic() - start) * 1000), fingerprint=before, inputsChanged=before is not None and after is not None and before != after, cacheable=before is not None and after is not None, cacheDiagnostic=cache_diagnostic, timedOut=timed_out, outputLimitExceeded=too_large)
         finally:
             try:
@@ -509,27 +764,106 @@ def run_build(request, own_process_group=False):
                     if process is not None:
                         for name in outputs:
                             getattr(process, name).close()
-                        if own_process_group or process.poll() is None:
-                            terminate(process, own_process_group)
+                        terminate(process)
                 finally:
                     for signum, handler in previous_handlers.items():
                         signal.signal(signum, handler)
 
 
-def mark_pending(location):
+def supervise(steps, parent):
+    """Run checks sequentially as session leader; kill the group on
+    cancellation or when the runtime that started it disappears."""
+    leader = os.getpgrp() == os.getpid()
+    child = None
+
+    def stop(*_):
+        if leader:
+            os.killpg(os.getpgrp(), signal.SIGKILL)
+        if child is not None and child.poll() is None:
+            child.kill()
+        os._exit(1)
+    for signum in CANCEL_SIGNALS:
+        signal.signal(signum, stop)
+    if os.getppid() != parent:
+        stop()
+    for command in steps:
+        child = subprocess.Popen(command, stdin=subprocess.DEVNULL)
+        while True:
+            try:
+                code = child.wait(timeout=.2)
+                break
+            except subprocess.TimeoutExpired:
+                if os.getppid() != parent:
+                    stop()
+        if code:
+            sys.exit(code if code > 0 else 128 - code)
+
+
+def pending_hint(folder):
+    hint = state_read(folder, 'pending.json')
+    sessions = hint.get('sessions')
+    return dict(hint, sessions=sessions if isinstance(sessions, dict) else {})
+
+
+class pending_lock:
+    """Short lock for pending.json only; never waits for a running build."""
+
+    def __init__(self, folder):
+        self.folder = folder
+
+    def __enter__(self):
+        self.stream = acquire(self.folder, time.monotonic() + 5, 'pending.lock')
+        return self
+
+    def __exit__(self, *_):
+        self.stream.close()
+
+
+def mark_pending(location, session=''):
     info = discover(location)
     folder = state_dir(info['root'])
-    # A hint has its own file, so editing never waits for an ongoing build. The
-    # actual success gate remains locked and compares all current input contents.
-    handle, temporary = tempfile.mkstemp(prefix='pending-', dir=folder)
-    try:
-        with os.fdopen(handle, 'w') as output:
-            json.dump({'pending': True}, output)
-        os.replace(temporary, folder / 'pending.json')
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    # A hint has its own file and lock, so editing never waits for an ongoing
+    # build. Each session keeps its own token: Stop only consumes its own.
+    with pending_lock(folder):
+        hint = pending_hint(folder)
+        sessions = hint['sessions']
+        sessions[str(session)] = secrets.token_hex(16)
+        state_write(folder, {'root': info['root'], 'sessions': sessions}, 'pending.json')
     return info
+
+
+def clear_pending(root, token, session=''):
+    """Remove this session's hint only if no newer edit replaced it."""
+    folder = state_dir(root)
+    with pending_lock(folder):
+        hint = pending_hint(folder)
+        sessions = hint['sessions']
+        if sessions.get(str(session)) != token:
+            return
+        del sessions[str(session)]
+        if sessions:
+            state_write(folder, {'root': hint.get('root', str(root)), 'sessions': sessions}, 'pending.json')
+        else:
+            try:
+                (folder / 'pending.json').unlink()
+            except FileNotFoundError:
+                pass
+
+
+def pending_roots(session='', limit=4096):
+    """Projects this session edited, read from the private per-user state."""
+    roots = {}
+    with os.scandir(state_base()) as entries:
+        for index, entry in enumerate(entries):
+            if index >= limit:
+                break
+            if not entry.name.startswith('build-') or not entry.is_dir(follow_symlinks=False):
+                continue
+            hint = pending_hint(Path(entry.path))
+            root, token = hint.get('root'), hint['sessions'].get(str(session))
+            if isinstance(root, str) and os.path.isabs(root) and isinstance(token, str):
+                roots[root] = token
+    return roots
 
 
 def literal(node):
@@ -637,7 +971,6 @@ def static_endpoints(root):
 
 
 def migration_inventory(root):
-    import configparser
     locations, warnings = [], []
     config = root / 'alembic.ini'
     if config.is_file():
@@ -654,7 +987,7 @@ def migration_inventory(root):
             locations = [str(Path(script) / 'versions')]
     else:
         locations = ['alembic/versions', 'migrations/versions']
-    files = set()
+    files, scanned = set(), []
     for location in locations:
         directory = (root / location.strip()).resolve()
         if not directory.is_relative_to(root):
@@ -662,6 +995,7 @@ def migration_inventory(root):
             continue
         if not directory.exists():
             continue
+        scanned.append(directory.relative_to(root).as_posix())
         files.update(source_files(directory))
     migrations, errors, risks, ids = [], [], [], {}
     for file in sorted(files):
@@ -713,7 +1047,12 @@ def migration_inventory(root):
                     if name.endswith(('.drop_table', '.drop_column', '.drop_index', '.alter_column')):
                         risks.append({'file': relative, 'line': node.lineno, 'code': 'ddl-risk', 'message': name + ': review data loss, locking and rolling compatibility'})
                     if name.endswith('.execute') and node.args:
-                        sql = literal(node.args[0])
+                        argument = node.args[0]
+                        # op.execute(sa.text("...")) carries the same literal SQL.
+                        if (isinstance(argument, ast.Call) and argument.args
+                                and ast.unparse(argument.func).split('.')[-1] == 'text'):
+                            argument = argument.args[0]
+                        sql = literal(argument)
                         if isinstance(sql, str) and re.search(r'(?i)\b(?:DROP|TRUNCATE|DELETE)\b', sql):
                             risks.append({'file': relative, 'line': node.lineno, 'code': 'destructive-sql', 'message': 'Review destructive SQL in upgrade()'})
     graph = {entry['revision']: entry['downRevision'] + entry['dependsOn'] for entry in migrations}
@@ -738,14 +1077,15 @@ def migration_inventory(root):
     heads = sorted(set(ids) - referenced)
     if len(heads) > 1:
         warnings.append('Multiple heads: confirm intentional branches or add a merge revision')
-    return {'mode': 'lint', 'databaseAccess': False, 'migrations': migrations, 'heads': heads, 'errors': errors, 'risks': risks, 'warnings': warnings,
+    return {'mode': 'lint', 'databaseAccess': False, 'locations': scanned, 'migrations': migrations, 'heads': heads, 'errors': errors, 'risks': risks, 'warnings': warnings,
             'limitation': 'Static revision graph and upgrade risks only; no env.py execution or database access. Applied-state immutability requires database/history evidence.'}
+
 
 
 def main():
     def interrupted(signum, frame):
         raise BuildCancelled(f'Runtime cancelled by signal {signum}')
-    for signum in (signal.SIGTERM, signal.SIGINT):
+    for signum in CANCEL_SIGNALS:
         signal.signal(signum, interrupted)
     try:
         raw = sys.stdin.read(1024 * 1024 + 1)
@@ -763,16 +1103,22 @@ def main():
         elif action == 'plan':
             result = build_plan(request)
         elif action == 'run':
-            result = run_build(request, own_process_group=True)
+            result = run_build(request)
         elif action == 'analyze':
             result = discover(request.get('projectRoot') or os.getcwd())
             result['endpoints'] = static_endpoints(Path(result['root']))
         elif action == 'migrations':
             result = migration_inventory(Path(discover(request.get('projectRoot') or os.getcwd())['root']))
         elif action == 'mark':
-            result = mark_pending(request.get('projectRoot') or os.getcwd())
+            result = mark_pending(request.get('projectRoot') or os.getcwd(), request.get('sessionId') or '')
+        elif action == 'state-location':
+            # Lets other adapters and tests clean exactly their own state.
+            result = {'stateBase': str(state_base()),
+                      'stateDir': str(state_dir(request['projectRoot'])) if request.get('projectRoot') else None}
         else:
             raise ValueError('Unknown runtime action')
+        if STATE_NOTICE and isinstance(result, dict):
+            result['stateDiagnostic'] = STATE_NOTICE[0]
         encoded = json.dumps(result)
         if len(encoded.encode('utf-8')) > 24 * 1024 * 1024:
             encoded = json.dumps({'ok': False, 'exitCode': 1, 'error': 'Runtime result exceeds 24 MiB serialized limit; narrow the scope'})
@@ -784,13 +1130,9 @@ def main():
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--syntax':
-        for file in source_files(Path(sys.argv[2])):
-            compile(read_regular(file), str(file), 'exec')
-        print('Python syntax check passed')
+        from source_inventory import syntax_check
+        syntax_check(Path(sys.argv[2]))
     elif len(sys.argv) > 1 and sys.argv[1] == '--checks':
-        for command in json.loads(sys.argv[2]):
-            code = subprocess.call(command, stdin=subprocess.DEVNULL)
-            if code:
-                sys.exit(code)
+        supervise(json.loads(sys.argv[2]), int(sys.argv[3]) if len(sys.argv) > 3 else os.getppid())
     else:
         main()

@@ -106,6 +106,8 @@ def freeze(report, case_name, case_dir, run=0, *, arm='with', variant=None, prov
                 or provenance['criterionDefinitions'] != defs):
             raise ValueError('Generation context differs from preparation')
         for key in ('modelRequested', 'effort', 'claudeVersion', 'executionLimits'):
+            if key == 'effort' and provenance[key] is None:
+                continue  # Not controlled by the runner; nothing to compare.
             if result.get(key, report.get(key)) != provenance[key]:
                 raise ValueError('Generation invocation differs from preparation: ' + key)
     bundle = {'schemaVersion': 2, 'case': case_name, 'prompt': current_prompt,

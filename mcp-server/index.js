@@ -5,11 +5,16 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 
 // ── helpers ─────────────────────────────────────────────────────────
+
+// Children still running, so a host shutdown signal can stop their process groups.
+const activeChildren = new Set();
 
 // No shell interpretation. Bound captured output and terminate the whole process
 // group so Python subprocesses cannot keep running after cancellation or timeout.
@@ -43,6 +48,9 @@ export function run(command, args = [], { cwd, timeout = 120_000, signal, input,
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
     const timer = setTimeout(() => stop("Timed out"), timeout);
+    let closed;
+    const entry = { stop, closed: new Promise(done => { closed = done; }) };
+    activeChildren.add(entry);
     child.on("error", (error) => { spawnError = error.message; stderr += error.message; });
     child.on("close", (code, exitSignal) => {
       // A terminated parent may close its pipes while detached descendants live.
@@ -50,6 +58,8 @@ export function run(command, args = [], { cwd, timeout = 120_000, signal, input,
       clearTimeout(timer);
       clearTimeout(killTimer);
       signal?.removeEventListener("abort", abort);
+      activeChildren.delete(entry);
+      closed();
       resolve({ stdout, stderr, exitCode: spawnError ? 1 : code ?? 1, ...(spawnError || reason || exitSignal ? { error: spawnError || reason || `Terminated by ${exitSignal}` } : {}) });
     });
   });
@@ -58,7 +68,10 @@ export function run(command, args = [], { cwd, timeout = 120_000, signal, input,
 const textResult = (value, isError = false) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], ...(isError ? { isError: true } : {}) });
 const result = (r) => textResult(r, r.exitCode !== 0 || r.ok === false || r.inputsChanged === true);
 const asArray = (value) => value == null ? [] : Array.isArray(value) ? value : [value];
-const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@", parseAttributeValue: false, removeNSPrefix: true });
+// An entity map enables numeric references (pytest writes newlines as &#10;) in
+// the same single decoding pass, without adding HTML named entities.
+const xmlEntities = { amp: "&", apos: "'", gt: ">", lt: "<", quot: "\"" };
+const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@", parseAttributeValue: false, removeNSPrefix: true, htmlEntities: xmlEntities });
 function parseXml(text) {
   if (text.length > 8 * 1024 * 1024) throw new Error("XML file exceeds 8 MiB limit.");
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new Error("DTD and entity declarations are not supported.");
@@ -67,11 +80,40 @@ function parseXml(text) {
   return xmlParser.parse(text);
 }
 const runtimeFile = fileURLToPath(new URL("../runtime/project_runtime.py", import.meta.url));
+// The runtime needs Python 3.11+ (tomllib); an activated application venv may
+// put an older python3 first on PATH. Shared rule with the hook launchers.
+export const RUNTIME_PYTHON_CANDIDATES = ["python3", "python3.14", "python3.13", "python3.12", "python3.11"];
+// The runtime is standard-library only. -I ignores PYTHON* variables (PYTHONPATH
+// could shadow json/secrets with application modules) and the script directory;
+// -S skips site, so an activated venv's .pth files never run. os.environ is not
+// modified, so build subprocesses still receive the caller's environment.
+export const RUNTIME_PYTHON_FLAGS = ["-I", "-S"];
+const VERSION_PROBE = "import sys; print('%d.%d' % sys.version_info[:2]); sys.exit(0 if sys.version_info >= (3, 11) else 3)";
+export async function selectRuntimePython(env = process.env) {
+  const override = env.FASTAPI_TOOLS_PYTHON;
+  const checked = [];
+  for (const command of override ? [override] : RUNTIME_PYTHON_CANDIDATES) {
+    const probe = await run(command, [...RUNTIME_PYTHON_FLAGS, "-c", VERSION_PROBE], { env, timeout: 5000, maxOutputBytes: 1024 });
+    const version = /^\d+\.\d+$/.test(probe.stdout.trim()) ? probe.stdout.trim() : null;
+    if (!probe.error && probe.exitCode === 0 && version) return command;
+    checked.push(`${command} (${version || (probe.error && /ENOENT/.test(probe.stderr) ? "not found" : "unusable")})`);
+  }
+  throw new Error(override
+    ? `FASTAPI_TOOLS_PYTHON is not a usable Python 3.11+ interpreter: ${checked.join(", ")}.`
+    : `The plugin runtime requires Python 3.11+; checked ${checked.join(", ")}. Set FASTAPI_TOOLS_PYTHON to a Python 3.11+ interpreter. The application's environment is selected separately.`);
+}
+// Cached per process; a failed selection is retried on the next request.
+let runtimePython;
+function runtimeInterpreter(env) {
+  runtimePython ??= selectRuntimePython(env).catch(error => { runtimePython = undefined; throw error; });
+  return runtimePython;
+}
 async function runtime(payload, ctx, timeout = 120_000) {
   // This plugin-owned setting selects diagnostic HTTP endpoints, not build inputs.
   const buildEnvironment = { ...process.env };
   delete buildEnvironment.FASTAPI_APP_PORT;
-  const execution = await run("python3", [runtimeFile], {
+  const python = await runtimeInterpreter(buildEnvironment);
+  const execution = await run(python, [...RUNTIME_PYTHON_FLAGS, runtimeFile], {
     input: JSON.stringify({ projectRoot: process.env.PROJECT_ROOT || process.cwd(), ...payload }), env: buildEnvironment,
     timeout, signal: ctx?.mcpReq?.signal, maxOutputBytes: 32 * 1024 * 1024,
   });
@@ -145,11 +187,20 @@ async function staticEndpoints(ctx) {
   return analysis.endpoints;
 }
 
+// The WHATWG parser canonicalizes IPv4 forms (2130706433, 0x7f.1) and IPv6, so
+// the parsed hostname is compared literally; other names are never resolved.
+export function isLoopbackHost(hostname) {
+  if (hostname === "localhost" || hostname === "[::1]") return true;
+  const octets = hostname.split(".");
+  return octets.length === 4 && octets[0] === "127" && octets.every(octet => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+}
 function appUrl(baseUrl, endpoint) {
   const configuredPort = process.env.FASTAPI_APP_PORT || "8000";
   if (!/^\d+$/.test(configuredPort) || Number(configuredPort) < 1 || Number(configuredPort) > 65535) throw new Error("FASTAPI_APP_PORT must be between 1 and 65535.");
   const url = new URL(baseUrl || `http://localhost:${configuredPort}`);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("baseUrl must be HTTP(S), without credentials, query or fragment.");
+  // Diagnostics target the local application only; never internal or metadata services.
+  if (!isLoopbackHost(url.hostname)) throw new Error("baseUrl must target a loopback host: localhost, 127.0.0.0/8 or [::1].");
   url.pathname = url.pathname.replace(/\/$/, "") + endpoint;
   return url;
 }
@@ -215,6 +266,7 @@ async function openapiEndpoints(args, ctx) {
 
 // ── server & registration ───────────────────────────────────────────
 
+const readOnly = { readOnlyHint: true, openWorldHint: false };
 export function createServer() {
   const server = new McpServer({ name: "mcp-fastapi", version: "0.3.0" });
   const register = (name, description, inputSchema, handler, annotations) => server.registerTool(name, { description, ...(inputSchema ? { inputSchema } : {}), ...(annotations ? { annotations } : {}) }, async (...args) => {
@@ -222,14 +274,36 @@ export function createServer() {
     try { return await handler(...(inputSchema ? args : [{}, args[0]])); } catch (e) { return textResult({ error: e.message }, true); }
   });
   const endpointPath = z.string().regex(/^\/(?!\/)[^?#]*$/).max(300);
-  register("analyze_project", "Discover Python project metadata, declared dependencies, environment and static FastAPI routes without importing the app.", undefined, analyzeProject);
+  const baseUrl = z.string().max(2048).optional().describe("Loopback application URL (localhost, 127.0.0.0/8 or [::1]); defaults to http://localhost:<app port>.");
+  register("analyze_project", "Discover Python project metadata, declared dependencies, environment and static FastAPI routes without importing the app.", undefined, analyzeProject, readOnly);
   register("initialize_project", "Generate a local FastAPI project only for an explicit user request. Requires an absolute absent destination with an existing parent outside Python projects/workspaces; refuses symlink ancestors and concurrent destinations. Installs nothing and executes no code.", z.object({ destination: z.string().min(1).max(4096), projectName: z.string().min(1).max(100), explicitRequest: z.literal(true) }), initializeProject, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
   register("run_build", "Run finite Python checks through shared locks and fingerprints. verify checks syntax plus declared/configured Ruff, mypy and pytest. Does not install dependencies.", z.object({ task: z.enum(["compile", "lint", "typecheck", "package", "verify", "check", "dependencies"]).default("compile"), force: z.boolean().default(false) }), runBuild);
   register("run_tests", "Run pytest with a fresh JUnit report and structured failures under the shared project lock.", z.object({ testPath: z.string().optional().describe("Relative pytest file/directory, optionally ::class::test.") }), runTests);
   register("check_migrations", "Inspect Alembic revision graphs and upgrade risks without database access. Explicit status mode executes alembic current against the configured database.", z.object({ mode: z.enum(["lint", "status"]).default("lint") }), checkMigrations);
-  register("openapi_endpoints", "Inventory static FastAPI routes, fetch runtime OpenAPI or compare both with parser limitations.", z.object({ mode: z.enum(["static", "runtime", "compare"]).default("static"), baseUrl: z.string().optional(), documentPath: endpointPath.default("/openapi.json") }), openapiEndpoints);
-  register("app_health", "Query configured health/readiness/liveness paths. FastAPI does not supply health routes automatically.", z.object({ baseUrl: z.string().optional(), probes: z.array(z.enum(["health", "readiness", "liveness"])).min(1).max(3).default(["health"]), paths: z.object({ health: endpointPath.optional(), readiness: endpointPath.optional(), liveness: endpointPath.optional() }).optional() }), appHealth);
+  register("openapi_endpoints", "Inventory static FastAPI routes, fetch runtime OpenAPI from the local application or compare both with parser limitations.", z.object({ mode: z.enum(["static", "runtime", "compare"]).default("static"), baseUrl, documentPath: endpointPath.default("/openapi.json") }), openapiEndpoints, readOnly);
+  register("app_health", "Query configured health/readiness/liveness paths of the local application. FastAPI does not supply health routes automatically.", z.object({ baseUrl, probes: z.array(z.enum(["health", "readiness", "liveness"])).min(1).max(3).default(["health"]), paths: z.object({ health: endpointPath.optional(), readiness: endpointPath.optional(), liveness: endpointPath.optional() }).optional() }), appHealth, readOnly);
   return server;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) serveStdio(createServer, { onerror: error => console.error(error.message) });
+// Node resolves symlinks in the main module URL but not in argv[1].
+function invokedDirectly() {
+  if (!process.argv[1]) return false;
+  try { return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url)); } catch { return false; }
+}
+
+// Claude Code stops stdio servers with SIGINT, SIGTERM 100 ms later and SIGKILL
+// 400 ms after that. Detached runtimes outlive a default signal exit, so ask each
+// runtime group to stop: the runtime traps SIGTERM and kills its build session.
+let shuttingDown = false;
+function shutdown(signalName) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const pending = [...activeChildren].map(entry => { entry.stop("Server stopped"); return entry.closed; });
+  const exit = () => process.exit(128 + (os.constants.signals[signalName] || 0));
+  Promise.race([Promise.all(pending), new Promise(done => setTimeout(done, 300))]).then(exit, exit);
+}
+
+if (invokedDirectly()) {
+  for (const signalName of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signalName, () => shutdown(signalName));
+  serveStdio(createServer, { onerror: error => console.error(error.message) });
+}

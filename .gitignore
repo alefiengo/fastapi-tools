@@ -27,6 +27,7 @@ Thumbs.db
 # --- Claude Code local state (must not ship with the plugin) ---
 .claude/settings.local.json
 .claude/plugins/data/
+.claude/worktrees/
 
 # --- Plugin evals run output (suite content is tracked, results are not) ---
 evals/results/

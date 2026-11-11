@@ -1,5 +1,5 @@
 """Real FastAPI routing, schema, lifespan, override and rollback smoke tests."""
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 import importlib.util
 from pathlib import Path
 import sqlite3
@@ -76,6 +76,23 @@ def test_auth_validation_and_filtered_response():
         app.dependency_overrides.update(before)
 
 
+def test_testclient_uses_supported_http_client():
+    """Starlette deprecates httpx for TestClient; the prepared env must provide httpx2."""
+    import subprocess
+    import sys
+
+    probe = (
+        "import warnings\n"
+        "with warnings.catch_warnings(record=True) as caught:\n"
+        "    warnings.simplefilter('always')\n"
+        "    import fastapi.testclient\n"
+        "print('\\n'.join(str(w.message) for w in caught if 'httpx' in str(w.message)))\n"
+    )
+    result = subprocess.run([sys.executable, "-I", "-c", probe], text=True, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+
+
 def load_fixture(name):
     path = Path(__file__).resolve().parents[2] / "evals/test-writer-behavior/fixtures" / f"{name}.py"
     spec = importlib.util.spec_from_file_location(name, path)
@@ -97,7 +114,8 @@ def test_service_ownership_success_and_real_rollback(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         orders.approve(101, "alice", "FAIL_DB")
     assert data.status(database) == "PENDING"
-    with sqlite3.connect(database) as connection:
+    # The sqlite3 context manager commits or rolls back but never closes.
+    with closing(sqlite3.connect(database)) as connection:
         assert connection.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 0
     orders.approve(101, "alice", "ok")
     assert data.status(database) == "APPROVED"

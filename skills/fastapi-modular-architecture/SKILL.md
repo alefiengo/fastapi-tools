@@ -1,6 +1,6 @@
 ---
 name: fastapi-modular-architecture
-description: Design and review module boundaries in a FastAPI application. Use for modular monoliths, import cycles or architecture checks.
+description: Design and review module boundaries in a FastAPI application. Use for modular monoliths, import cycles or architecture checks in a FastAPI codebase; not for other Python packages.
 ---
 
 # Modular Architecture for FastAPI

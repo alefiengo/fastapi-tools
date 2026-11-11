@@ -1,6 +1,6 @@
 ---
 name: fastapi-performance
-description: Investigate FastAPI latency, event-loop blocking, SQL query behavior, pools and caching using measured evidence.
+description: Investigate FastAPI application latency, event-loop blocking, SQL query behavior, pools and caching using measured evidence. Not for Python services without FastAPI.
 ---
 
 # Performance for FastAPI

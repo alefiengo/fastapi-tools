@@ -5,12 +5,10 @@ Uses installed dependencies through a private fixture environment, never touches
 an application's environment. Run after installing requirements.txt separately.
 """
 import argparse
-import hashlib
 import importlib.metadata
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,9 +28,14 @@ class Ecosystem(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix='fastapi-real-')
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # Private runtime state for this fixture, removed with it (never ~/.cache).
+        self.state = tempfile.TemporaryDirectory(prefix='fastapi-real-state-')
+        self.addCleanup(self.state.cleanup)
+        os.chmod(self.state.name, 0o700)
         self.env = dict(os.environ, PATH=str(Path(sys.executable).parent) + os.pathsep + os.environ['PATH'],
                         PIP_NO_INDEX='1', UV_OFFLINE='1', UV_NO_SYNC='1',
-                        POETRY_VIRTUALENVS_CREATE='false', POETRY_NO_INTERACTION='1')
+                        POETRY_VIRTUALENVS_CREATE='false', POETRY_NO_INTERACTION='1',
+                        FASTAPI_TOOLS_STATE_HOME=self.state.name)
         self.env.pop('VIRTUAL_ENV', None)
         self.env.pop('PROJECT_ROOT', None)
         self.env.pop('CLAUDE_PROJECT_DIR', None)
@@ -74,8 +77,6 @@ def test_hello() -> None:
             self.command(['uv', 'lock', '--offline'])
         elif self.manager == 'poetry':
             self.command(['poetry', 'lock'])
-        state = Path(tempfile.gettempdir()) / ('fastapi-tools-build-' + str(os.getuid()) + '-' + hashlib.sha256(str(self.root.resolve()).encode()).hexdigest())
-        self.addCleanup(lambda: shutil.rmtree(state, ignore_errors=True))
 
     def write(self, name, value):
         path = self.root / name
@@ -156,20 +157,20 @@ with create_engine(context.config.get_main_option("sqlalchemy.url")).connect() a
 class GeneratedProject(unittest.TestCase):
     def test_generated_application_runs_without_installing_it(self):
         from project_initializer import initialize_project
-        with tempfile.TemporaryDirectory(prefix='fastapi-generated-real-') as base:
+        with tempfile.TemporaryDirectory(prefix='fastapi-generated-real-') as base, \
+                tempfile.TemporaryDirectory(prefix='fastapi-generated-state-') as state:
+            os.chmod(state, 0o700)
             destination = Path(base) / 'new-api'
             generated = initialize_project({'destination': str(destination), 'projectName': 'new-api', 'explicitRequest': True})
             self.assertFalse(generated['dependenciesInstalled'])
             self.assertFalse(generated['codeExecuted'])
             request = {'action': 'run', 'projectRoot': str(destination), 'task': 'verify'}
-            result = subprocess.run([sys.executable, str(RUNTIME)], cwd=destination,
+            result = subprocess.run([sys.executable, str(RUNTIME)], cwd=destination, env=dict(os.environ, FASTAPI_TOOLS_STATE_HOME=state),
                                     input=json.dumps(request), capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             verified = json.loads(result.stdout)
             self.assertTrue(verified['ok'], verified)
             self.assertIn('1 passed', verified['stdout'])
-            state = Path(tempfile.gettempdir()) / ('fastapi-tools-build-' + str(os.getuid()) + '-' + hashlib.sha256(str(destination).encode()).hexdigest())
-            shutil.rmtree(state, ignore_errors=True)
 
 
 if __name__ == '__main__':

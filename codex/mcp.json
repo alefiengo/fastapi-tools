@@ -6,7 +6,33 @@
         "-e",
         "const root = process.env.FASTAPI_TOOLS_PLUGIN_ROOT; if (!root || !require('node:path').isAbsolute(root)) { console.error('Launch Codex with node /absolute/plugin/path/codex/run.mjs (FASTAPI_TOOLS_PLUGIN_ROOT is required).'); process.exit(1); } import(require('node:url').pathToFileURL(require('node:path').join(root, 'codex', 'launch.mjs')).href).catch(error => { console.error(error.message); process.exitCode = 1; });"
       ],
-      "env_vars": ["FASTAPI_TOOLS_PLUGIN_ROOT", "FASTAPI_APP_PORT"]
+      "env_vars": [
+        "FASTAPI_TOOLS_PLUGIN_ROOT",
+        "FASTAPI_APP_PORT",
+        "FASTAPI_TOOLS_PYTHON",
+        "FASTAPI_TOOLS_STATE_HOME",
+        "VIRTUAL_ENV",
+        "PYTHONPATH",
+        "UV_PROJECT_ENVIRONMENT",
+        "UV_CACHE_DIR",
+        "UV_PYTHON",
+        "UV_PYTHON_INSTALL_DIR",
+        "POETRY_HOME",
+        "POETRY_DATA_DIR",
+        "POETRY_CONFIG_DIR",
+        "POETRY_CACHE_DIR",
+        "POETRY_VIRTUALENVS_PATH",
+        "POETRY_VIRTUALENVS_IN_PROJECT",
+        "XDG_CONFIG_HOME",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_HOME",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy"
+      ]
     }
   }
 }

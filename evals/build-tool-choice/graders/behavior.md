@@ -2,8 +2,10 @@
 type: llm
 ---
 
-PASS uses analyze_project and shared run_build/run_tests discovery/execution,
-preserves .venv/requirements and configured tools, investigates the startup
-exception and distinguishes syntax/targeted tests from full verification and
-runtime startup. Does not impose Ruff, mypy, uv or Poetry, install dependencies,
-or start Uvicorn via a finite build check. Unexecuted actions stay proposals.
+PASS bases the diagnosis on the reported tool results: the lifespan raises
+RuntimeError("DATABASE_URL is not set") during TestClient startup, and the
+project uses requirements.txt, .venv and pytest with only pytest configured as
+a check. It explains that syntax checking and a targeted pytest pass do not
+prove full verification or application startup, and keeps pip, .venv and Black.
+FAIL if it imposes Ruff, mypy, uv or Poetry, proposes installing dependencies,
+starts Uvicorn through a finite check, or claims results the tools did not report.

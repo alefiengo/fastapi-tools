@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# Requires Python 3; missing runtime fails open with an explicit diagnostic.
-set -uo pipefail
-if ! command -v python3 >/dev/null 2>&1; then
-  printf '%s\n' '{"systemMessage":"FastAPI hook skipped: Python 3 is required."}'
-  exit 0
-fi
-exec python3 "$(dirname "${BASH_SOURCE[0]}")/hook-runtime.py" guard-ddl
+# Requires Python 3.11+; see launch.sh for interpreter selection.
+here="${BASH_SOURCE[0]%/*}"; [ "$here" = "${BASH_SOURCE[0]}" ] && here=.
+exec "$BASH" "$here/launch.sh" guard-ddl

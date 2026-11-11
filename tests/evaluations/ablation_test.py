@@ -31,7 +31,7 @@ class AblationTests(unittest.TestCase):
         self.write(self.repo / 'runtime/project_runtime.py', 'raise RuntimeError("never execute")')
         self.write(self.repo / '.mcp.json', '{}')
         self.case = self.repo / 'evals/rollback'
-        self.write(self.case / 'prompt.md', '---\nmax_turns: 3\n---\nExplain how to verify rollback.\n')
+        self.write(self.case / 'prompt.md', '---\nmax_turns: 3\ntimeout_seconds: 30\n---\nExplain how to verify rollback.\n')
         self.write(self.case / 'graders/quality.md', '---\ntype: llm\n---\nRequire independent observation after a real failure.\n')
         self.write(self.case / 'graders/activation.md', '---\ntype: tool_used\ntool: Skill\n---\n')
         self.report = json.loads((ROOT / 'tests/evaluations/fixtures/two-arm-report.json').read_text())
@@ -70,9 +70,11 @@ class AblationTests(unittest.TestCase):
 
     def test_all_variants_preserve_inputs_and_remove_only_selected_components(self):
         for root in (self.repo, self.app):
-            for relative in ('nested/AGENTS.md', 'nested/CLAUDE.md', 'nested/evals/rubric.md',
-                             'docs/answers.md', '.env', '.fastapi-tools/state.json', 'node_modules/pkg/x.js'):
+            for relative in ('nested/AGENTS.md', 'nested/CLAUDE.md', '.env',
+                             '.fastapi-tools/state.json', 'node_modules/pkg/x.js'):
                 self.write(root / relative, 'secret or evaluator context')
+        self.write(self.repo / 'nested/evals/rubric.md', 'evaluator context outside the product')
+        self.write(self.repo / 'docs/answers.md', 'operator docs outside the product')
         self.write(self.repo / 'README.md', 'operator docs')
         (self.app / 'main.py').chmod(0o755)
         plan = self.plan()
@@ -93,6 +95,59 @@ class AblationTests(unittest.TestCase):
         self.assertFalse((self.base / 'selected-minus/plugin/agents/fastapi-test-writer.md').exists())
         self.assertEqual(ablation.inventory(self.app), before_app)
         self.assertEqual(ablation.inventory(self.repo, product=True), before_plugin)
+
+    def test_application_directories_named_like_reports_or_docs_are_kept(self):
+        for relative in ('app/reports/router.py', 'app/docs/schemas.py', 'app/results/__init__.py',
+                         'reports/__init__.py'):
+            self.write(self.app / relative, 'APP = True\n')
+        files = self.plan()['projectFiles']
+        for relative in ('app/reports/router.py', 'app/docs/schemas.py', 'app/results/__init__.py',
+                         'reports/__init__.py'):
+            self.assertIn(relative, files)
+        for relative in ('.env', 'AGENTS.md', '.venv/bin/python', 'app/__pycache__/x.pyc'):
+            self.write(self.app / relative, 'excluded')
+        files = self.plan()['projectFiles']
+        self.assertFalse(any(Path(p).name in {'.env', 'AGENTS.md', 'python', 'x.pyc'} for p in files))
+
+    def test_application_snapshot_with_evaluator_material_is_refused(self):
+        for relative in ('nested/evals/rubric.md', 'tests/graders/answer.md'):
+            with self.subTest(relative=relative):
+                path = self.app / relative
+                self.write(path, 'expected answer')
+                with self.assertRaisesRegex(ValueError, 'evaluation material'):
+                    self.plan()
+                path.unlink()
+                path.parent.rmdir()
+
+    def test_plugin_copy_carries_eval_suite_without_results(self):
+        self.write(self.repo / 'evals/results/2026/aggregate-result.json', '{}')
+        self.write(self.repo / 'evals/mocks/fastapi/_tools.json', '{"tools": []}')
+        plan = self.plan()
+        files = plan['pluginFiles']
+        self.assertIn('evals/rollback/prompt.md', files)
+        self.assertIn('evals/rollback/graders/quality.md', files)
+        self.assertIn('evals/mocks/fastapi/_tools.json', files)
+        self.assertFalse(any(p.startswith('evals/results/') for p in files))
+        target = self.base / 'minus'
+        ablation.prepare(plan, 'selected-minus', 'rollback', 0, target, self.base / 'minus.json')
+        self.assertTrue((target / 'plugin/evals/rollback/prompt.md').is_file())
+        self.assertFalse((target / 'plugin/skills/fastapi-testing').exists())
+
+    def test_effort_is_optional_because_claude_plugin_eval_cannot_set_it(self):
+        plan = self.plan(effort=None)
+        self.assertIsNone(plan['effort'])
+        report = copy.deepcopy(self.report)
+        report.pop('effort')
+        provenance = ablation.preparation(plan, 'full', 'rollback', 0)
+        bundle = judge.freeze(report, 'rollback', self.case, variant='full', provenance=provenance)
+        self.assertIsNone(bundle['provenance']['effort'])
+        with self.assertRaisesRegex(ValueError, 'effort'):
+            self.plan(effort='  ')
+
+    def test_execution_limits_must_match_case_frontmatter(self):
+        for kwargs in ({'max_turns': 4}, {'generation_timeout': 300}):
+            with self.subTest(**kwargs), self.assertRaisesRegex(ValueError, 'frontmatter'):
+                self.plan(**kwargs)
 
     def test_paired_criteria_missing_metrics_and_activation_remain_distinct(self):
         plan = self.plan()

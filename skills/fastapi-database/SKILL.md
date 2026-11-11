@@ -1,11 +1,11 @@
 ---
 name: fastapi-database
-description: Design and troubleshoot SQLAlchemy/SQLModel persistence, sessions, SQL queries and Alembic migrations for FastAPI.
+description: Design and troubleshoot SQLAlchemy/SQLModel persistence, sessions, SQL queries and Alembic migrations in a FastAPI application. Not for SQLAlchemy or Alembic outside a FastAPI project.
 ---
 
 # Database for FastAPI
 
-Inspect whether the project uses SQLAlchemy, SQLModel or another ORM; keep its established sync/async model. A session belongs to one request/unit of work. Choose a clear transaction owner and rollback on failures. With async sessions, avoid implicit lazy loads during serialization and avoid sharing a session across concurrent tasks.
+Inspect whether the project uses SQLAlchemy, SQLModel or another ORM; keep its established sync/async model. A session belongs to one request/unit of work. Choose a clear transaction owner and rollback on failures. With async sessions, avoid implicit lazy loads during serialization and avoid sharing a session across concurrent tasks. SQLAlchemy 2.1 requires Python 3.11+ and no longer installs greenlet by default: the asyncio extension needs `sqlalchemy[asyncio]` or a driver extra such as `sqlalchemy[postgresql-asyncpg]`, otherwise importing `sqlalchemy.ext.asyncio` raises ImportError.
 
 Use database constraints for invariants and explicit transactions for multi-write operations. Test a failure after the first write to establish atomicity; observe final state through a fresh independent session. SQLite cannot prove PostgreSQL locking, data types or isolation behavior.
 
@@ -25,9 +25,9 @@ python -m alembic upgrade head
 `alembic check` is not this plugin's static lint: it executes the configured
 migration environment and compares database schema with metadata using
 autogenerate. It requires the appropriate target authorization and inherits
-autogenerate's detection limits. Empty output is not proof that a backfill,
-rename or rolling deployment is safe. A failed SQLAlchemy flush requires an
+autogenerate's detection limits. A passing check ("No new upgrade operations
+detected.") is not proof that a backfill, rename or rolling deployment is safe. A failed SQLAlchemy flush requires an
 explicit rollback before the same Session can be reused.
 
 References: https://alembic.sqlalchemy.org/en/latest/autogenerate.html and
-https://docs.sqlalchemy.org/en/20/orm/session_basics.html
+https://docs.sqlalchemy.org/en/21/orm/session_basics.html

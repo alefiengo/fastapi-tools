@@ -2,4 +2,5 @@
 type: tool_used
 tool: Agent
 input_match: '"subagent_type"\s*:\s*"(?:[\w-]+:)?fastapi-test-writer"'
+arm: with-only
 ---

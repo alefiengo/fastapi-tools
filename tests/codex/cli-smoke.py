@@ -4,8 +4,11 @@
 Requires Codex CLI, Node and the already installed mcp-server dependencies.
 Not part of test-basic.sh: CI need not install/authenticate a Codex CLI.
 """
+import hashlib
 import json
 import os
+import pwd
+import shutil
 from pathlib import Path
 import queue
 import signal
@@ -42,6 +45,12 @@ def main():
         app.mkdir()
         (app / 'pyproject.toml').write_text(
             '[project]\nname="app"\nversion="1.0"\ndependencies=["fastapi"]\n')
+        # The build interpreter records the variable names Codex delivered.
+        names = base / 'build-environment.txt'
+        (app / '.venv/bin').mkdir(parents=True)
+        (app / '.venv/bin/python').write_text(
+            '#!/bin/sh\nenv | cut -d= -f1 | sort > ' + json.dumps(str(names)) + '\n')
+        (app / '.venv/bin/python').chmod(0o755)
         # Register the shipped MCP wiring only in this disposable host config.
         # plugin/read checks packaging; no plugin/install is ever requested.
         server = json.loads((ROOT / 'codex/mcp.json').read_text())['mcpServers']['fastapi']
@@ -51,7 +60,14 @@ def main():
             '\nenv_vars = ' + json.dumps(server['env_vars']) + '\n')
         # No credentials copied and no global installation/config changes.
         environment = {**os.environ, 'CODEX_HOME': str(home),
-                       'PROJECT_ROOT': '/stale-project-context'}
+                       'PROJECT_ROOT': '/stale-project-context',
+                       # Forwarded toolchain/network settings and an application
+                       # variable that Codex intentionally does not forward.
+                       # Shared lock/result location; the build state stays in this
+                       # temporary directory and is removed with it.
+                       'FASTAPI_TOOLS_STATE_HOME': str(base / 'state'),
+                       'VIRTUAL_ENV': str(app / '.venv'), 'UV_PROJECT_ENVIRONMENT': str(app / '.venv'),
+                       'HTTPS_PROXY': 'http://proxy.invalid:3128', 'DATABASE_URL': 'sqlite://'}
         version = subprocess.run(['codex', '--version'], cwd=app, env=environment,
                                  capture_output=True, text=True, check=True, timeout=10).stdout.strip()
         with (base / 'stderr.log').open('w+') as errors:
@@ -129,6 +145,18 @@ def main():
                 assert not payload.get('isError'), payload
                 analyzed = json.loads(payload['content'][0]['text'])
                 assert Path(analyzed['root']).resolve() == app.resolve(), analyzed
+                built = request('mcpServer/tool/call', {
+                    'threadId': thread, 'server': 'fastapi',
+                    'tool': 'run_build', 'arguments': {'task': 'compile', 'force': True},
+                })
+                assert not built.get('isError'), built
+                delivered = set(names.read_text().split())
+                for name in ('FASTAPI_TOOLS_STATE_HOME', 'VIRTUAL_ENV', 'UV_PROJECT_ENVIRONMENT', 'HTTPS_PROXY', 'TMPDIR'):
+                    assert name in delivered, (name, delivered)
+                assert 'DATABASE_URL' not in delivered, delivered
+                # The runtime used the forwarded state home (runtime/project_runtime.py state_dir()).
+                key = hashlib.sha256(str(app.resolve()).encode()).hexdigest()
+                assert (base / 'state' / f'build-{key}' / 'build.lock').is_file(), list((base / 'state').iterdir())
                 print(f'PASS {version}: {len(skills)} skills, no hooks, {len(server["tools"])} MCP tools, actual application cwd; no plugin installation or model turns')
             finally:
                 # Kill only this isolated process group, including wrapper/MCP.
@@ -137,6 +165,10 @@ def main():
                 except ProcessLookupError:
                     pass
                 child.wait(timeout=10)
+                # Defensive cleanup if the state home was not honored.
+                key = hashlib.sha256(str(app.resolve()).encode()).hexdigest()
+                shutil.rmtree(Path(pwd.getpwuid(os.getuid()).pw_dir) / '.cache/fastapi-tools' / f'build-{key}',
+                              ignore_errors=True)
 
 
 if __name__ == '__main__':
