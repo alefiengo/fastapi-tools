@@ -200,7 +200,8 @@ test('CHANGELOG sections, dates and links are well formed and the README example
   const [top, ...released] = sections;
   assert.ok(top[1] === 'Unreleased' || top[1] === version, 'the newest section is Unreleased or the current version');
   if (top[1] === 'Unreleased') assert.ok(released[0][1] === version || version > released[0][1], 'the current version is released or newer');
-  const dates = released.map(m => m[2]);
+  const versions = top[1] === 'Unreleased' ? released : sections;
+  const dates = versions.map(m => m[2]);
   for (const [index, date] of dates.entries()) {
     assert.ok(date && !Number.isNaN(Date.parse(date)));
     if (index) assert.ok(date <= dates[index - 1], 'sections are newest first');
@@ -208,7 +209,7 @@ test('CHANGELOG sections, dates and links are well formed and the README example
   for (const [, label] of sections) assert.match(log, new RegExp(`^\\[${label}\\]: https://github.com/alefiengo/fastapi-tools/`, 'm'));
   if (top[1] === 'Unreleased') assert.match(log.split('## [Unreleased]')[1].split(/^## \[/m)[0], /### Compatibility/);
   const tag = read('README.md').match(/--branch v(\d+\.\d+\.\d+) /)[1];
-  assert.ok(released.some(m => m[1] === tag), 'README clone example targets a released version');
+  assert.ok(versions.some(m => m[1] === tag), 'README clone example targets a released version');
 });
 
 test('documentation keeps no hard-coded plugin version and its relative links resolve', () => {

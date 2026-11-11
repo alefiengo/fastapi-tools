@@ -268,7 +268,7 @@ async function openapiEndpoints(args, ctx) {
 
 const readOnly = { readOnlyHint: true, openWorldHint: false };
 export function createServer() {
-  const server = new McpServer({ name: "mcp-fastapi", version: "0.3.0" });
+  const server = new McpServer({ name: "mcp-fastapi", version: "0.4.0" });
   const register = (name, description, inputSchema, handler, annotations) => server.registerTool(name, { description, ...(inputSchema ? { inputSchema } : {}), ...(annotations ? { annotations } : {}) }, async (...args) => {
     // The SDK calls schema-less tools with (ctx), others with (args, ctx).
     try { return await handler(...(inputSchema ? args : [{}, args[0]])); } catch (e) { return textResult({ error: e.message }, true); }

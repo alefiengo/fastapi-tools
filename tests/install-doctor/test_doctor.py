@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -321,7 +322,9 @@ class DoctorTests(unittest.TestCase):
         self.mutate_json('package-lock.json', lambda data: data['packages'][''].update(version='9.9.9'))
         self.mutate_json('.claude-plugin/marketplace.json', lambda data: data['plugins'][0].update(version='9.9.9'))
         index = self.bundle / 'mcp-server/index.js'
-        index.write_text(index.read_text().replace('version: "0.3.0"', 'version: "9.9.9"'))
+        source, replaced = re.subn(r'version: "\d+\.\d+\.\d+"', 'version: "9.9.9"', index.read_text(), count=1)
+        self.assertEqual(replaced, 1)
+        index.write_text(source)
         self.assertEqual(self.run_doctor()['versions']['version'], '9.9.9')
 
     def test_codex_env_vars_and_claude_registration_shape(self):
