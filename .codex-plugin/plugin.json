@@ -1,6 +1,6 @@
 {
   "name": "fastapi-tools",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "FastAPI skills and shared-runtime MCP tools for local Codex workspaces. Verification is explicit; Claude hooks and agents are not registered.",
   "author": {
     "name": "alefiengo"

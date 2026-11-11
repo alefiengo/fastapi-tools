@@ -29,18 +29,17 @@ Project initialization is local, explicit and separate from installation or exec
 
 Inspect the application's dependency constraints. Guidance covers FastAPI,
 Pydantic, SQLAlchemy/SQLModel and Alembic without prescribing an application version.
-The 0.3.0 release validation used Linux, Node 24.21.0 and Python 3.12.10/3.12.14.
-Afterwards the 2026-11-11 audit also started the MCP server on Node 20.3.0 and ran the
-deterministic suites with Python 3.11.17. macOS and WSL are implementation targets
-without an executed validation matrix. The prerequisite ranges above are not
-evidence that every Node/Python combination was tested.
+The 0.4.0 release validation used Linux on WSL2 with Node 24.21.0 and Python 3.12.15;
+the deterministic suites also ran with Python 3.11.17 and the MCP server started on
+Node 20.3.0. macOS is an implementation target without an executed validation. The
+prerequisite ranges above are not evidence that every Node/Python combination was tested.
 
 ## Install and use
 
 Install from GitHub:
 
 ```bash
-git clone --branch v0.3.0 https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
+git clone --branch v0.4.0 https://github.com/alefiengo/fastapi-tools ~/dev/fastapi-tools
 npm ci --omit=dev --prefix ~/dev/fastapi-tools
 cd /path/to/your/fastapi-project
 claude --plugin-dir ~/dev/fastapi-tools

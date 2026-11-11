@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-11-11
 
 ### Changed
 
@@ -51,7 +51,7 @@
 - Shared Python project discovery, coordinated checks, static routes, Alembic inspection, pytest reports and configurable HTTP probes.
 - Functional regression suites and executable FastAPI examples.
 
-[Unreleased]: https://github.com/alefiengo/fastapi-tools/compare/v0.3.0...main
 [0.1.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.1.0
 [0.2.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.2.0
 [0.3.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.3.0
+[0.4.0]: https://github.com/alefiengo/fastapi-tools/releases/tag/v0.4.0
